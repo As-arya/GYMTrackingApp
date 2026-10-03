@@ -1,0 +1,23 @@
+title = "GYMProject secret checks"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "gym-groq-key"
+description = "Groq API key, including a key outside an assignment"
+regex = '''gsk_[A-Za-z0-9]{20,}'''
+keywords = ["gsk_"]
+
+[[rules]]
+id = "gym-signing-password"
+description = "Literal Android signing password"
+regex = '''(?i)(?:storePassword|keyPassword)\s*(?:=|:)\s*["']([^"'\r\n]+)["']'''
+secretGroup = 1
+keywords = ["storepassword", "keypassword"]
+
+[[rules]]
+id = "gym-personal-backup"
+description = "Exported workout backup containing a personal profile"
+regex = '''"profile"\s*:\s*\{\s*"name"\s*:\s*"[^"\r\n]+"'''
+keywords = ["profile"]

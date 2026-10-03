@@ -1,0 +1,41 @@
+#!/bin/sh
+set -eu
+cd "$(git rev-parse --show-toplevel)"
+
+# Also reject private files staged with git add --force.
+private_files=$(git ls-files --cached --ignored --exclude-standard)
+if [ -n "$private_files" ]; then
+    printf '%s\n' 'Blocked: private/ignored files are tracked. Remove them from the index:' "$private_files" >&2
+    exit 1
+fi
+
+if command -v gitleaks >/dev/null 2>&1; then
+    scanner=gitleaks
+elif [ -x tmp/security-tools/gitleaks.exe ]; then
+    scanner=tmp/security-tools/gitleaks.exe
+else
+    printf '%s\n' 'Blocked: install Gitleaks and enable hooks as described in SECURITY.md.' >&2
+    exit 1
+fi
+
+if [ "${1:-}" = history ]; then
+    # Check removed files as well as files in the current checkout.
+    history_files=$(git log --all --name-only --format=)
+    if [ -n "$history_files" ]; then
+        set +e
+        private_history=$(printf '%s\n' "$history_files" | git check-ignore --no-index --stdin)
+        ignore_status=$?
+        set -e
+        if [ "$ignore_status" -gt 1 ]; then
+            printf '%s\n' 'Blocked: could not check private paths in history.' >&2
+            exit 1
+        fi
+        if [ -n "$private_history" ]; then
+            printf '%s\n' 'Blocked: private/ignored paths exist in Git history:' "$private_history" >&2
+            exit 1
+        fi
+    fi
+    exec "$scanner" git --log-opts=--all --config .gitleaks.toml --redact=100 --no-banner --ignore-gitleaks-allow .
+fi
+
+exec "$scanner" git --pre-commit --staged --config .gitleaks.toml --redact=100 --no-banner --ignore-gitleaks-allow .

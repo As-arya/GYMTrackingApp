@@ -1,0 +1,8 @@
+* text=auto eol=lf
+gradlew text eol=lf
+*.bat text eol=crlf
+.githooks/* text eol=lf
+*.png binary
+*.webp binary
+*.ttf binary
+*.jar binary
