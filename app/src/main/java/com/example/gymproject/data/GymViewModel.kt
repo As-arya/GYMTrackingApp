@@ -17,10 +17,27 @@ data class GymState(val loaded: Boolean = false, val profile: Profile? = null, v
     val active get() = sessions.firstOrNull { it.ended == null }
     fun planAt(date: LocalDate) = plans.lastOrNull { it.effective <= date.toEpochDay() && it.start <= date.toEpochDay() }
     fun dayAt(date: LocalDate): PlanDay? = planAt(date)?.let { it.decoded()[cycleIndex(LocalDate.ofEpochDay(it.start), date, it.weeks)] }
+    fun scheduledAt(date: LocalDate): Boolean = sessions.any { it.day == date.toEpochDay() && it.revision != null } ||
+        dayAt(date)?.let { !it.rest && it.targets.isNotEmpty() } == true
     // ponytail: in-memory history scan; move daily aggregates to SQL when long histories affect responsiveness.
     fun dayLogs(date: LocalDate): List<SetLog> {
         val ids = sessions.filter { it.day == date.toEpochDay() }.map { it.id }.toSet()
         return logs.filter { it.sessionId in ids }
+    }
+    fun completedSets(session: WorkoutSession, target: Target): Int = logs.filter {
+        it.sessionId == session.id && it.targetKey == target.key && it.index in 0 until target.sets
+    }.map { it.index }.distinct().size
+    fun nextTarget(session: WorkoutSession, preferred: String? = null): Target? {
+        val targets = session.decoded()
+        val start = targets.indexOfFirst { it.key == preferred }.coerceAtLeast(0)
+        return (targets.drop(start) + targets.take(start)).firstOrNull { completedSets(session, it) < it.sets }
+    }
+    fun plannedSessionAt(date: LocalDate) = sessions.filter { it.day == date.toEpochDay() && it.revision != null }.maxByOrNull { it.started }
+    fun nextForDay(date: LocalDate): Target? {
+        // A finished snapshot must never fall back to the first exercise in today's mutable plan.
+        active?.let { return nextTarget(it) }
+        plannedSessionAt(date)?.let { return nextTarget(it) }
+        return dayAt(date)?.targets?.firstOrNull()
     }
     fun ratio(date: LocalDate): Float {
         val daySessions = sessions.filter { it.day == date.toEpochDay() }
@@ -30,8 +47,10 @@ data class GymState(val loaded: Boolean = false, val profile: Profile? = null, v
         val done = dayLogs(date).size
         return if (target > 0) (done.toFloat() / target).coerceIn(0f, 1f) else if (done > 0) 1f else 0f
     }
-    fun streakAt(today: LocalDate): Int = streak(today, plans.minOfOrNull { LocalDate.ofEpochDay(maxOf(it.start, it.effective)) } ?: today,
-        { dayAt(it)?.let { d -> !d.rest && d.targets.isNotEmpty() } == true }, { dayLogs(it).isNotEmpty() })
+    fun streakAt(today: LocalDate): Int = streak(today, minOf(
+        plans.minOfOrNull { LocalDate.ofEpochDay(maxOf(it.start, it.effective)) } ?: today,
+        sessions.filter { it.revision != null }.minOfOrNull { LocalDate.ofEpochDay(it.day) } ?: today),
+        { scheduledAt(it) }, { dayLogs(it).isNotEmpty() })
 }
 
 class GymViewModel(app: Application) : AndroidViewModel(app) {
@@ -58,12 +77,12 @@ class GymViewModel(app: Application) : AndroidViewModel(app) {
     fun setTheme(value: String) { theme.value = value; settings.edit().putString("theme", value).apply() }
     fun setReduced(value: Boolean) { reducedMotion.value = value; settings.edit().putBoolean("reduce", value).apply() }
 
-    fun saveProfile(name: String, age: Int, cm: Double, kg: Double, goal: String, target: String, onSaved: () -> Unit) {
+    fun saveProfile(name: String, age: Int, cm: Double, kg: Double, goal: String, target: String, photo: String, onSaved: () -> Unit) {
         if (name.isBlank() || name.length > 80 || age !in 10..120 || !cm.isFinite() || cm !in 80.0..250.0 || !kg.isFinite() || kg !in 20.0..400.0 || goal !in goals || target.length > 160) {
             message("Periksa nama, usia, tinggi, dan berat. Gunakan angka serta satuan yang sesuai."); return
         }
-        action { db.withTransaction {
-            dao.saveProfile(Profile(name = name.trim(), age = age, cm = cm, goal = goal, target = target.trim()))
+        action { require(photo.isEmpty() || decodeProfilePhoto(photo)?.also { it.recycle() } != null); db.withTransaction {
+            dao.saveProfile(Profile(name = name.trim(), age = age, cm = cm, goal = goal, target = target.trim(), photo = photo))
             dao.saveMeasurement(Measurement(LocalDate.now().toEpochDay(), kg))
         }; message("Profil tersimpan"); onSaved() }
     }
@@ -76,7 +95,7 @@ class GymViewModel(app: Application) : AndroidViewModel(app) {
         }
         action {
             val today = LocalDate.now()
-            val effective = if (state.value.plans.isEmpty()) maxOf(start, today) else maxOf(start, today.plusDays(1))
+            val effective = planEffectiveDate(start, today)
             val created = maxOf(System.currentTimeMillis(), Math.addExact(state.value.plans.maxOfOrNull { it.created } ?: 0, 1))
             dao.addPlan(PlanRevision(UUID.randomUUID().toString(), title.trim(), start.toEpochDay(), weeks, effective.toEpochDay(), created, daysJson(days.map { it.withAutomaticRest() })))
             message("Plan tersimpan, berlaku ${effective.dayOfMonth}/${effective.monthValue}")
@@ -84,12 +103,12 @@ class GymViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    fun startSession(title: String, targets: List<Target>, revision: String? = null) {
+    fun startSession(title: String, targets: List<Target>, revision: String? = null, onStarted: () -> Unit = {}) {
         if (targets.isEmpty() || targets.any { !validTarget(it) }) { message("Pilih minimal satu latihan."); return }
         action { db.withTransaction {
             if (dao.active() == null) dao.addSession(WorkoutSession(UUID.randomUUID().toString(), LocalDate.now().toEpochDay(),
                 System.currentTimeMillis(), ZoneId.systemDefault().id, title, revision, targetsJson(targets)))
-        } }
+        }; onStarted() }
     }
 
     fun logSet(session: WorkoutSession, target: Target, index: Int, reps: Int, kg: Double, seconds: Int, km: Double) {
@@ -105,7 +124,7 @@ class GymViewModel(app: Application) : AndroidViewModel(app) {
                     if (kind != LogKind.REPS) seconds else 0, if (kind == LogKind.CARDIO) km else 0.0, System.currentTimeMillis())) != -1L
             }
             if (saved && target.rest > 0) {
-                try { RestTimerService.command(getApplication(), "START", target.rest) }
+                try { RestTimerService.command(getApplication(), "START", target.rest, session.id, target.key) }
                 catch (_: Exception) { message("Set tersimpan. Timer tidak dapat dimulai; buka aplikasi dan coba lagi.") }
             }
         }
@@ -124,6 +143,39 @@ class GymViewModel(app: Application) : AndroidViewModel(app) {
     }
     fun finish(session: WorkoutSession, onSaved: () -> Unit) = action { dao.updateSession(session.copy(ended = System.currentTimeMillis())); runCatching { RestTimerService.command(getApplication(), "SKIP") }; message("Sesi tersimpan di riwayat"); onSaved() }
     fun deleteSession(session: WorkoutSession) = action { dao.deleteSession(session.id) }
+    fun correctSessionDate(session: WorkoutSession, date: LocalDate, onSaved: () -> Unit) {
+        if (date > LocalDate.now() || date.toEpochDay() < 0) { message("Pilih tanggal yang tidak melewati hari ini."); return }
+        action { db.withTransaction {
+            val current = dao.session(session.id) ?: error("Sesi tidak ditemukan")
+            require(current.ended != null)
+            dao.updateSession(current.copy(day = date.toEpochDay()))
+        }; message("Tanggal sesi diperbarui; target dan hasil tetap sama"); onSaved() }
+    }
+    fun saveWeight(original: Long?, date: LocalDate, kg: Double, onSaved: () -> Unit) {
+        if (!kg.isFinite() || kg !in 20.0..400.0 || date > LocalDate.now() || date.toEpochDay() < 0) {
+            message("Gunakan berat 20–400 kg dan tanggal hingga hari ini."); return
+        }
+        action {
+            val day = date.toEpochDay()
+            val saved = db.withTransaction {
+                if (day != original && dao.measurementAt(day) != null) false else {
+                    if (original != null && original != day) dao.deleteMeasurement(original)
+                    dao.saveMeasurement(Measurement(day, kg)); true
+                }
+            }
+            if (saved) { message("Catatan berat tersimpan"); onSaved() }
+            else message("Tanggal itu sudah memiliki catatan. Edit catatan yang ada.")
+        }
+    }
+    fun deleteWeight(day: Long, onSaved: () -> Unit) = action { dao.deleteMeasurement(day); onSaved() }
+    fun addSessionTarget(session: WorkoutSession, target: Target, onSaved: () -> Unit) {
+        if (!validTarget(target)) { message("Periksa target latihan."); return }
+        action { db.withTransaction {
+            val current = dao.active() ?: error("Tidak ada sesi aktif")
+            require(current.id == session.id && current.decoded().none { it.key == target.key })
+            dao.updateSession(current.copy(targets = targetsJson(current.decoded() + target)))
+        }; onSaved() }
+    }
     fun replaceTarget(session: WorkoutSession, old: Target, exerciseId: String) {
         if (session.ended != null || state.value.logs.any { it.sessionId == session.id && it.targetKey == old.key }) { message("Gerakan yang sudah tercatat tidak diganti."); return }
         val exercise = Catalog.byId[exerciseId] ?: return
@@ -133,14 +185,26 @@ class GymViewModel(app: Application) : AndroidViewModel(app) {
     fun applyProposal(revision: String, key: String, kg: Double?, reps: Int?, sets: Int?, rest: Int?, onSaved: () -> Unit) {
         val current = state.value.plans.lastOrNull()
         if (current?.id != revision) { message("Plan sudah berubah. Minta usulan baru."); return }
-        val days = current.decoded().map { day -> day.copy(targets = day.targets.map { t -> if (t.key != key) t else t.copy(kg = kg ?: t.kg, reps = reps ?: t.reps, sets = sets ?: t.sets, rest = rest ?: t.rest) }) }
+        val days = current.decoded().map { day -> day.copy(targets = day.targets.map { t -> if (t.key != key) t else t.copy(kg = kg ?: t.kg, reps = reps ?: t.reps, repsMax = reps ?: t.repsMax, sets = sets ?: t.sets, rest = rest ?: t.rest) }) }
         if (days == current.decoded()) { message("Usulan tidak memuat perubahan yang dapat diterapkan."); return }
         savePlan(current.title, LocalDate.ofEpochDay(current.start), current.weeks, days, onSaved)
     }
     fun undoPlan() {
         val last = state.value.plans.lastOrNull() ?: return
-        if (last.effective <= LocalDate.now().toEpochDay()) { message("Revisi sudah berlaku; edit plan untuk membuat revisi baru."); return }
-        action { dao.deletePlan(last.id); message("Revisi mendatang dibatalkan") }
+        action { db.withTransaction {
+            val revisions = dao.planRevisions()
+            require(revisions.lastOrNull()?.id == last.id)
+            if (last.effective > LocalDate.now().toEpochDay()) {
+                dao.deletePlan(last.id)
+                message("Revisi mendatang dibatalkan")
+            } else {
+                val previous = revisions.dropLast(1).lastOrNull() ?: error("Tidak ada revisi sebelumnya")
+                dao.addPlan(previous.copy(id = UUID.randomUUID().toString(),
+                    effective = planEffectiveDate(LocalDate.ofEpochDay(previous.start), LocalDate.now()).toEpochDay(),
+                    created = maxOf(System.currentTimeMillis(), Math.addExact(last.created, 1))))
+                message("Plan sebelumnya diterapkan kembali; riwayat tetap aman")
+            }
+        } }
     }
     override fun onCleared() { super.onCleared(); db.close() }
 }

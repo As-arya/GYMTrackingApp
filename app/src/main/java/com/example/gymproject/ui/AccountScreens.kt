@@ -70,10 +70,13 @@ import java.time.LocalDate
     var kg by rememberSaveable{mutableStateOf(s.measurements.lastOrNull()?.kg?.let(::decimal) ?: "")}
     var goal by rememberSaveable{mutableStateOf(s.profile?.goal ?: goals.first())}
     var target by rememberSaveable{mutableStateOf(s.profile?.target ?: "")}
+    var photo by rememberSaveable{mutableStateOf(s.profile?.photo ?: "")}
+    var photoBusy by remember{mutableStateOf(false)}
     var error by remember{mutableStateOf<String?>(null)}
     val saving by vm.saving.collectAsStateWithLifecycle()
     Screen(if(existing) "Edit profil" else "Kenalan dulu",if(existing) "Target pribadi boleh dikosongkan" else "Langkah kecil, kemajuan nyata",back=back,spacing=16.dp) {
         if(!existing) {AuthArtwork("Onboarding");Section("Atur profil latihanmu")}
+        PhotoEditor(photo,{photo=it},{photoBusy=it})
         Field("Nama panggilan",name,{name=it})
         Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
             Field("Usia (tahun)",age,{age=it},Modifier.weight(1f),true)
@@ -87,7 +90,7 @@ import java.time.LocalDate
         }
         Field("Target pribadi (opsional)",target,{target=it})
         error?.let{Text(it,color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)}
-        Action(if(existing) "Simpan perubahan" else "Mulai perjalanan",Modifier.fillMaxWidth(),!saving) {
+        Action(if(existing) "Simpan perubahan" else "Mulai perjalanan",Modifier.fillMaxWidth(),!saving && !photoBusy) {
             val a=age.toIntOrNull();val h=number(cm);val w=number(kg)
             error=when {
                 name.isBlank() || name.length>80->"Isi nama, maksimal 80 karakter."
@@ -97,7 +100,7 @@ import java.time.LocalDate
                 target.length>160->"Target maksimal 160 karakter."
                 else->null
             }
-            if(error==null) vm.saveProfile(name,a!!,h!!,w!!,goal,target,onSaved)
+            if(error==null) vm.saveProfile(name,a!!,h!!,w!!,goal,target,photo,onSaved)
         }
         if(!existing) TextButton(onClick=onSaved,modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)){Text("Lewati, atur nanti")}
     }
@@ -107,7 +110,7 @@ import java.time.LocalDate
     val p=s.profile;val measurement=s.measurements.lastOrNull()
     Screen("Profil","Profil latihan lokal",back,action={IconButton(onClick=settings){FigmaIcon("settings","Pengaturan")}}) {
         Row(horizontalArrangement=Arrangement.spacedBy(16.dp),verticalAlignment=Alignment.CenterVertically) {
-            Buddy("Hello",modifier=Modifier.size(120.dp))
+            ProfilePhoto(p?.photo.orEmpty(),104.dp)
             Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text(p?.name ?: "Teman latihan",style=MaterialTheme.typography.headlineLarge)
                 Text(p?.let{"${it.age} tahun · ${it.goal.lowercase()}"} ?: "Lengkapi profil sesuai tujuanmu",color=MaterialTheme.colorScheme.onSurfaceVariant)
@@ -128,13 +131,51 @@ import java.time.LocalDate
     }
 }
 
-@Composable fun WeightHistory(s:GymState,back:()->Unit) {
+@Composable fun WeightHistory(vm:GymViewModel,s:GymState,back:()->Unit) {
+    var editor by remember{mutableStateOf(false)}
+    var selected by remember{mutableStateOf<Measurement?>(null)}
+    var deletion by remember{mutableStateOf<Measurement?>(null)}
+    val saving by vm.saving.collectAsStateWithLifecycle()
     Screen("Riwayat berat badan","Catatan berat dari profilmu",back) {
-        if(s.measurements.isEmpty()) Caption("Belum ada catatan. Isi berat hari ini pada Edit profil.")
-        s.measurements.asReversed().forEach{m->Row(Modifier.fillMaxWidth().heightIn(min=48.dp),horizontalArrangement=Arrangement.SpaceBetween) {
-            Text(LocalDate.ofEpochDay(m.day).format(DateLabel));Text("${decimal(m.kg)} kg",style=MaterialTheme.typography.titleMedium)
-        }}
+        if(s.measurements.isEmpty()) Caption("Belum ada catatan. Tambahkan berat pertamamu.")
+        else {
+            val first=s.measurements.first();val last=s.measurements.last();val delta=last.kg-first.kg
+            Row(horizontalArrangement=Arrangement.spacedBy(20.dp)) {
+                Metric("${decimal(last.kg)} kg","berat terbaru",Modifier.weight(1f))
+                Metric("${if(delta>0) "+" else ""}${decimal(kotlin.math.round(delta*10)/10)} kg","sejak catatan pertama",Modifier.weight(1f))
+            }
+            TrendChart(s.measurements.map{it.day to it.kg},"kg")
+        }
+        Action("Tambah catatan berat",Modifier.fillMaxWidth()){selected=null;editor=true}
+        s.measurements.asReversed().forEach{m->
+            InfoRow(LocalDate.ofEpochDay(m.day).format(DateLabel),"${decimal(m.kg)} kg · ketuk untuk koreksi",{selected=m;editor=true})
+        }
     }
+    if(editor) {
+        var day by rememberSaveable(selected?.day){mutableLongStateOf(selected?.day ?: LocalDate.now().toEpochDay())}
+        var kg by rememberSaveable(selected?.day){mutableStateOf(selected?.kg?.let(::decimal) ?: "")}
+        var error by remember{mutableStateOf<String?>(null)}
+        AlertDialog(onDismissRequest={if(!saving) editor=false},title={Text(if(selected==null) "Tambah berat" else "Koreksi berat")},text={
+            CompositionLocalProvider(LocalFieldBackground provides MaterialTheme.colorScheme.surfaceContainerHigh) {
+                Column(verticalArrangement=Arrangement.spacedBy(16.dp)) {
+                    DatePickerButton("Tanggal",LocalDate.ofEpochDay(day)){day=it.toEpochDay()}
+                    Field("Berat (kg)",kg,{kg=it},numeric=true)
+                    error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
+                    if(selected!=null) TextButton(enabled=!saving,onClick={deletion=selected}){Text("Hapus catatan",color=MaterialTheme.colorScheme.error)}
+                }
+            }
+        },confirmButton={TextButton(enabled=!saving,onClick={
+            val weight=number(kg);val date=LocalDate.ofEpochDay(day)
+            error=when {
+                weight==null || !weight.isFinite() || weight !in 20.0..400.0 || date>LocalDate.now() || day<0->"Berat 20–400 kg, tanggal tidak melewati hari ini."
+                day!=selected?.day && s.measurements.any{it.day==day}->"Tanggal itu sudah memiliki catatan. Edit catatan yang ada."
+                else->null
+            }
+            if(error==null) vm.saveWeight(selected?.day,date,weight!!){editor=false}
+        }){Text("Simpan")}},dismissButton={TextButton(enabled=!saving,onClick={editor=false}){Text("Batal")}})
+    }
+    deletion?.let{m->AlertDialog(onDismissRequest={deletion=null},title={Text("Hapus catatan berat?")},text={Text("${decimal(m.kg)} kg pada ${LocalDate.ofEpochDay(m.day).format(DateLabel)} akan dihapus.")},
+        confirmButton={TextButton(enabled=!saving,onClick={vm.deleteWeight(m.day){deletion=null;editor=false}}){Text("Hapus")}},dismissButton={TextButton(onClick={deletion=null}){Text("Batal")}})}
 }
 
 @Composable fun SettingsScreen(vm:GymViewModel,s:GymState,back:()->Unit,ai:()->Unit) {

@@ -3,7 +3,8 @@ package com.example.gymproject.data
 import androidx.room.*
 import kotlinx.coroutines.flow.Flow
 
-@Entity data class Profile(@PrimaryKey val id: Int = 1, val name: String, val age: Int, val cm: Double, val goal: String, val target: String = "")
+@Entity data class Profile(@PrimaryKey val id: Int = 1, val name: String, val age: Int, val cm: Double, val goal: String, val target: String = "",
+    @ColumnInfo(defaultValue = "''") val photo: String = "")
 @Entity data class Measurement(@PrimaryKey val day: Long, val kg: Double)
 @Entity data class PlanRevision(@PrimaryKey val id: String, val title: String, val start: Long, val weeks: Int, val effective: Long, val created: Long, val days: String) {
     @Ignore fun decoded() = readDays(days)
@@ -24,6 +25,10 @@ data class SetLog(val sessionId: String, val targetKey: String, val index: Int, 
     @Query("SELECT * FROM WorkoutSession WHERE ended IS NULL LIMIT 1") suspend fun active(): WorkoutSession?
     @Upsert suspend fun saveProfile(value: Profile)
     @Upsert suspend fun saveMeasurement(value: Measurement)
+    @Query("DELETE FROM Measurement WHERE day = :day") suspend fun deleteMeasurement(day: Long)
+    @Query("SELECT * FROM Measurement WHERE day = :day") suspend fun measurementAt(day: Long): Measurement?
+    @Query("SELECT * FROM WorkoutSession WHERE id = :id") suspend fun session(id: String): WorkoutSession?
+    @Query("SELECT * FROM PlanRevision ORDER BY created") suspend fun planRevisions(): List<PlanRevision>
     @Insert suspend fun addPlan(value: PlanRevision)
     @Insert suspend fun addSession(value: WorkoutSession)
     @Update suspend fun updateSession(value: WorkoutSession)
@@ -39,5 +44,6 @@ data class SetLog(val sessionId: String, val targetKey: String, val index: Int, 
     @Query("DELETE FROM Profile") suspend fun clearProfile()
 }
 
-@Database(entities = [Profile::class, Measurement::class, PlanRevision::class, WorkoutSession::class, SetLog::class], version = 1, exportSchema = true)
+@Database(entities = [Profile::class, Measurement::class, PlanRevision::class, WorkoutSession::class, SetLog::class], version = 2,
+    autoMigrations = [AutoMigration(from = 1, to = 2)], exportSchema = true)
 abstract class GymDatabase : RoomDatabase() { abstract fun dao(): GymDao }

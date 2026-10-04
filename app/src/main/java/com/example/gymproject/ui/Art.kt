@@ -5,6 +5,10 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.animation.core.*
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.*
@@ -105,6 +109,12 @@ val exerciseImages = mapOf(
 }
 
 @Composable fun Buddy(group: String, animate: Boolean = false, modifier: Modifier = Modifier) {
+    val lift=if(animate) {
+        val loop=rememberInfiniteTransition(label="Napas karakter")
+        loop.animateFloat(0f,-2f,infiniteRepeatable(tween(2400,easing=FastOutSlowInEasing),RepeatMode.Reverse),label="Gerak lembut")
+    } else remember{mutableFloatStateOf(0f)}
+    val density=LocalDensity.current.density
+    val artModifier=modifier.graphicsLayer{translationY=lift.value*density}
     val id = when(group) {
         "Push", "Pull", "Legs" -> R.drawable.figma_static_artwork_push
         "Plan" -> R.drawable.figma_static_artwork_plan
@@ -124,10 +134,10 @@ val exerciseImages = mapOf(
         "Login" -> intArrayOf(20,30,835,835)
         else -> null
     }
-    if(crop == null) Image(painterResource(id),null,modifier,contentScale=ContentScale.Fit)
+    if(crop == null) Image(painterResource(id),null,artModifier,contentScale=ContentScale.Fit)
     else {
         val bitmap=ImageBitmap.imageResource(id)
-        Canvas(modifier) {
+        Canvas(artModifier) {
             val scale=minOf(size.width/crop[2],size.height/crop[3])
             val w=(crop[2]*scale).toInt(); val h=(crop[3]*scale).toInt()
             drawImage(bitmap,srcOffset=IntOffset(crop[0],crop[1]),srcSize=IntSize(crop[2],crop[3]),

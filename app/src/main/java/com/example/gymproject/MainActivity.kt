@@ -1,6 +1,8 @@
 package com.example.gymproject
 
 import android.os.Bundle
+import android.content.Intent
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -11,12 +13,20 @@ import com.example.gymproject.ui.GymApp
 
 class MainActivity : ComponentActivity() {
     private val vm: GymViewModel by viewModels()
+    private val sessionRequest = mutableIntStateOf(0)
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
-        if (RestTimerService.restore(this).remaining(android.os.SystemClock.elapsedRealtime()) > 0) {
+        val timer = RestTimerService.restore(this)
+        if (timer.active) {
             runCatching { RestTimerService.command(this, "RESTORE") }
         }
-        setContent { GymApp(vm, intent.getBooleanExtra("session", false)) }
+        if (intent.getBooleanExtra("session", false) || timer.finished) sessionRequest.intValue++
+        setContent { GymApp(vm, sessionRequest.intValue) }
+    }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        if (intent.getBooleanExtra("session", false)) sessionRequest.intValue++
     }
 }

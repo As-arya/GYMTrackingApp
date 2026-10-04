@@ -106,7 +106,7 @@ object GroqCoach {
         val kg=if(j.has("kg") && !j.isNull("kg")) j.getDouble("kg") else null
         val p=Proposal(plan.id,key,kg,int("reps"),int("sets"),int("rest"),j.optString("reason").take(500))
         require(Catalog.byId.getValue(target.exerciseId).kind==LogKind.REPS || (p.kg==null && p.reps==null))
-        require(validTarget(target.copy(kg=p.kg ?: target.kg,reps=p.reps ?: target.reps,sets=p.sets ?: target.sets,rest=p.rest ?: target.rest)))
+        require(validTarget(target.copy(kg=p.kg ?: target.kg,reps=p.reps ?: target.reps,repsMax=p.reps ?: target.repsMax,sets=p.sets ?: target.sets,rest=p.rest ?: target.rest)))
         require(p.kg!=null || p.reps!=null || p.sets!=null || p.rest!=null)
         return p
     }

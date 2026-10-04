@@ -1,6 +1,9 @@
 package com.example.gymproject.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.*
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -32,6 +35,7 @@ private fun cloneDay(day:PlanDay)=day.copy(targets=day.targets.map{it.copy(key=U
 
 @Composable fun PlanScreen(vm:GymViewModel,s:GymState,immersive:(Boolean)->Unit,profile:()->Unit) {
     val latest=s.plans.lastOrNull()
+    val today=LocalToday.current
     var stage by rememberSaveable{mutableStateOf("Overview")}
     var title by rememberSaveable(latest?.id){mutableStateOf(latest?.title ?: "Plan latihan")}
     var start by rememberSaveable(latest?.id){mutableLongStateOf(latest?.start ?: LocalDate.now().toEpochDay())}
@@ -46,6 +50,7 @@ private fun cloneDay(day:PlanDay)=day.copy(targets=day.targets.map{it.copy(key=U
     var editor by remember{mutableStateOf<Target?>(null)}
     var restConfirm by remember{mutableStateOf(false)}
     var discard by remember{mutableStateOf(false)}
+    var undo by remember{mutableStateOf(false)}
     val saving by vm.saving.collectAsStateWithLifecycle()
     fun update(value:PlanDay){raw=daysJson(days.mapIndexed{i,d->if(i==index) value else d})}
     fun reset(){title=latest?.title ?: "Plan latihan";start=latest?.start ?: LocalDate.now().toEpochDay();weeks=latest?.weeks ?: 1;week=0;raw=latest?.days ?: daysJson(List(7){PlanDay()})}
@@ -53,8 +58,14 @@ private fun cloneDay(day:PlanDay)=day.copy(targets=day.targets.map{it.copy(key=U
     LaunchedEffect(stage,picker){immersive(stage!="Overview" || picker)}
     DisposableEffect(Unit){onDispose{immersive(false)}}
     BackHandler(enabled=stage!="Overview"){back()}
-    if(stage=="Overview") {
-        Screen("Plan latihan","Minggu ${week+1} dari ${latest?.weeks ?: 1}",main=true,action={IconButton(onClick=profile){FigmaIcon("profile","Profil")}}) {
+    val motion=LocalMotion.current
+    AnimatedContent(stage,transitionSpec={
+        (fadeIn(tween(if(motion) 360 else 0,easing=FastOutSlowInEasing))+
+            slideInVertically(tween(if(motion) 420 else 0,easing=FastOutSlowInEasing)){if(motion) it/28 else 0}) togetherWith
+            fadeOut(tween(if(motion) 180 else 0))
+    },label="Editor plan") { visibleStage ->
+    if(visibleStage=="Overview") {
+        Screen("Plan latihan","Minggu ${week+1} dari ${latest?.weeks ?: 1}",main=true,action={ProfileButton(s.profile?.photo.orEmpty(),profile)}) {
             Row(horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically) {
                 Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                     Section("Bangun ritmemu.")
@@ -74,10 +85,11 @@ private fun cloneDay(day:PlanDay)=day.copy(targets=day.targets.map{it.copy(key=U
                         {reset();week=(index/7).coerceAtMost(weeks-1);weekday=i;stage="Day"},e)
                 }
                 Caption("Siklus berulang otomatis. Revisi berlaku ${LocalDate.ofEpochDay(latest.effective).format(DateLabel)}.")
-                if(latest.effective>LocalDate.now().toEpochDay()) TextButton(onClick={vm.undoPlan()},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)){Text("Batalkan revisi mendatang")}
+                if(latest.effective>today.toEpochDay()) TextButton(onClick={vm.undoPlan()},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)){Text("Batalkan revisi mendatang")}
+                else if(s.plans.size>1) TextButton(onClick={undo=true},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)){Text("Pulihkan plan sebelumnya")}
             }
         }
-    } else if(stage=="Editor") {
+    } else if(visibleStage=="Editor") {
         Screen("Edit plan","Perubahan berlaku untuk sesi berikutnya",back={back()}) {
             Field("Nama plan",title,{title=it})
             DatePickerButton("Tanggal mulai",LocalDate.ofEpochDay(start)){start=it.toEpochDay()}
@@ -94,7 +106,7 @@ private fun cloneDay(day:PlanDay)=day.copy(targets=day.targets.map{it.copy(key=U
             }
             if(week>0) TextButton(onClick={raw=daysJson(days.mapIndexed{i,d->if(i/7==week) cloneDay(days[(week-1)*7+i%7]) else d})}){Text("Salin minggu sebelumnya")}
             Caption("Hari tanpa gerakan otomatis menjadi istirahat saat plan disimpan.")
-            Caption(if(latest==null) "Plan pertama dapat dimulai hari ini." else "Perubahan berlaku paling cepat besok. Riwayat tetap memakai target sebelumnya.")
+            Caption("Perubahan langsung berlaku hari ini, kecuali tanggal mulai dipilih di masa depan. Sesi berjalan dan riwayat tetap memakai target sebelumnya.")
             Action("Simpan plan",Modifier.fillMaxWidth(),!saving){vm.savePlan(title,LocalDate.ofEpochDay(start),weeks,days.take(weeks*7)){stage="Overview"}}
         }
     } else {
@@ -123,6 +135,7 @@ private fun cloneDay(day:PlanDay)=day.copy(targets=day.targets.map{it.copy(key=U
             Caption("Hari disimpan ke draft. Gunakan Simpan plan untuk menerapkannya.")
         }
     }
+    }
     if(picker) CatalogPicker({picker=false}){e->picker=false;editor=Target(exerciseId=e.id,sets=if(e.kind==LogKind.CARDIO) 1 else 3,
         seconds=if(e.kind==LogKind.CARDIO) 600 else 60,rest=vm.settings.getInt("default-rest",90))}
     editor?.let{t->TargetEditor(t,{editor=null}){value->val exists=day.targets.any{it.key==value.key};update(day.copy(targets=if(exists) day.targets.map{if(it.key==value.key) value else it} else day.targets+value));editor=null}}
@@ -130,6 +143,8 @@ private fun cloneDay(day:PlanDay)=day.copy(targets=day.targets.map{it.copy(key=U
         confirmButton={TextButton(onClick={update(day.copy(rest=true,targets=emptyList()));restConfirm=false}){Text("Jadikan istirahat")}},dismissButton={TextButton(onClick={restConfirm=false}){Text("Batal")}})
     if(discard) AlertDialog(onDismissRequest={discard=false},title={Text("Tinggalkan draft?")},text={Text("Perubahan yang belum disimpan akan dibuang.")},
         confirmButton={TextButton(onClick={reset();stage="Overview";discard=false}){Text("Buang perubahan")}},dismissButton={TextButton(onClick={discard=false}){Text("Lanjut edit")}})
+    if(undo) AlertDialog(onDismissRequest={undo=false},title={Text("Pulihkan plan sebelumnya?")},text={Text("Isi revisi sebelumnya akan diterapkan kembali mulai hari ini atau tanggal mulainya. Sesi berjalan dan riwayat tidak berubah.")},
+        confirmButton={TextButton(enabled=!saving,onClick={vm.undoPlan();undo=false}){Text("Pulihkan")}},dismissButton={TextButton(onClick={undo=false}){Text("Batal")}})
 }
 
 @Composable private fun WeekChoices(weeks:Int,selected:Int,onSelect:(Int)->Unit) {
@@ -139,7 +154,7 @@ private fun cloneDay(day:PlanDay)=day.copy(targets=day.targets.map{it.copy(key=U
 }
 
 fun targetLabel(t:Target,e:Exercise)=when(e.kind) {
-    LogKind.REPS->"${t.sets} set × ${t.reps} rep · ${decimal(t.kg)} kg"
+    LogKind.REPS->"${t.sets} set × ${if(t.repsMax>t.reps) "${t.reps}–${t.repsMax}" else "${t.reps}"} rep · ${decimal(t.kg)} kg"
     LogKind.DURATION->"${t.sets} set × ${t.seconds} detik"
     LogKind.CARDIO->"${t.sets} interval × ${decimal(t.seconds/60.0)} menit${if(t.km>0) " · ${decimal(t.km)} km" else ""}"
 }+" · rest ${t.rest} dtk"
@@ -187,15 +202,16 @@ fun targetLabel(t:Target,e:Exercise)=when(e.kind) {
 @Composable fun TargetEditor(t:Target,onDismiss:()->Unit,onSave:(Target)->Unit) {
     val e=Catalog.byId.getValue(t.exerciseId)
     var sets by rememberSaveable(t.key){mutableStateOf(t.sets.toString())};var reps by rememberSaveable(t.key){mutableStateOf(t.reps.toString())}
+    var repsMax by rememberSaveable(t.key){mutableStateOf(if(t.repsMax>t.reps) t.repsMax.toString() else "")}
     var kg by rememberSaveable(t.key){mutableStateOf(decimal(t.kg))};var seconds by rememberSaveable(t.key){mutableStateOf(t.seconds.toString())}
     var km by rememberSaveable(t.key){mutableStateOf(decimal(t.km))};var rest by rememberSaveable(t.key){mutableStateOf(t.rest.toString())}
     var error by remember{mutableStateOf(false)}
     AlertDialog(onDismissRequest=onDismiss,title={Text(e.name)},text={CompositionLocalProvider(LocalFieldBackground provides MaterialTheme.colorScheme.surfaceContainerHigh){Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(16.dp)) {
         ExerciseArt(e);Caption(e.tip)
         Field(if(e.kind==LogKind.CARDIO) "Jumlah interval" else "Jumlah set",sets,{sets=it},numeric=true)
-        if(e.kind==LogKind.REPS){Field("Target repetisi per set",reps,{reps=it},numeric=true);Field("Beban awal (kg)",kg,{kg=it},numeric=true)}
+        if(e.kind==LogKind.REPS){Field("Target repetisi per set / minimum",reps,{reps=it},numeric=true);Field("Repetisi maksimum (opsional)",repsMax,{repsMax=it},numeric=true);Field("Beban awal (kg)",kg,{kg=it},numeric=true)}
         else {Field("Durasi per set/interval (detik)",seconds,{seconds=it},numeric=true);if(e.kind==LogKind.CARDIO) Field("Jarak per interval (km, opsional)",km,{km=it},numeric=true)}
         Field("Rest antar-set (detik, 0 = tanpa rest)",rest,{rest=it},numeric=true)
         if(error) Text("Periksa nilai: set 1–20, rep 1–200, beban 0–1000, durasi 1–14400, rest 0–1800.",color=MaterialTheme.colorScheme.error,style=MaterialTheme.typography.bodySmall)
-    }}},confirmButton={TextButton(onClick={val value=t.copy(sets=sets.toIntOrNull() ?: 0,reps=reps.toIntOrNull() ?: 0,kg=number(kg) ?: -1.0,seconds=seconds.toIntOrNull() ?: 0,km=number(km) ?: -1.0,rest=rest.toIntOrNull() ?: -1);if(validTarget(value)) onSave(value) else error=true}){Text("Simpan")}},dismissButton={TextButton(onClick=onDismiss){Text("Batal")}})
+    }}},confirmButton={TextButton(onClick={val value=t.copy(sets=sets.toIntOrNull() ?: 0,reps=reps.toIntOrNull() ?: 0,repsMax=if(repsMax.isBlank()) reps.toIntOrNull() ?: 0 else repsMax.toIntOrNull() ?: 0,kg=number(kg) ?: -1.0,seconds=seconds.toIntOrNull() ?: 0,km=number(km) ?: -1.0,rest=rest.toIntOrNull() ?: -1);if(validTarget(value)) onSave(value) else error=true}){Text("Simpan")}},dismissButton={TextButton(onClick=onDismiss){Text("Batal")}})
 }

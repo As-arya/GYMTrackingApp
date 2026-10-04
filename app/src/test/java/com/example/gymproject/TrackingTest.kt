@@ -16,6 +16,41 @@ import java.time.LocalDate
 import com.example.gymproject.ui.progressValue
 
 class TrackingTest {
+    @Test fun immediatePlanRevisionKeepsPastAndSessionSnapshots() {
+        val today=LocalDate.of(2026,10,4)
+        assertEquals(today,planEffectiveDate(today.minusWeeks(2),today))
+        assertEquals(today,planEffectiveDate(today,today))
+        assertEquals(today.plusDays(3),planEffectiveDate(today.plusDays(3),today))
+        val old=Target(key="t",exerciseId="bench",sets=4,reps=8,repsMax=12)
+        val days=List(7){PlanDay("Push",targets=listOf(old.copy(key="t$it")))}
+        val first=PlanRevision("first","Plan",today.minusWeeks(1).toEpochDay(),1,today.minusWeeks(1).toEpochDay(),1,daysJson(days))
+        val revision=first.copy(id="new",effective=planEffectiveDate(today.minusWeeks(1),today).toEpochDay(),created=2,days=daysJson(List(7){PlanDay(rest=true)}))
+        val session=WorkoutSession("s",today.toEpochDay(),1000,"Asia/Bangkok","Push","first",targetsJson(listOf(old)))
+        val state=GymState(plans=listOf(first,revision),sessions=listOf(session),logs=listOf(SetLog("s","t",0,9,20.0,0,0.0,1100)))
+        assertEquals("first",state.planAt(today.minusDays(1))?.id)
+        assertEquals("new",state.planAt(today)?.id)
+        assertEquals(.25f,state.ratio(today),.001f)
+        assertEquals(listOf(old),session.decoded())
+        assertTrue(state.scheduledAt(today)) // A saved workout still counts if today's new plan is rest.
+        assertEquals(1,state.streakAt(today))
+    }
+    @Test fun repRangeAndOldBackupRemainCompatible() {
+        val target=Target(exerciseId="bench",reps=8,repsMax=12)
+        assertTrue(validTarget(target))
+        assertEquals(target,targetFrom(target.json()))
+        assertFalse(validTarget(target.copy(repsMax=7)))
+        assertFalse(validTarget(target.copy(repsMax=201)))
+        val old=target.json().apply{remove("repsMax")}
+        assertEquals(8,targetFrom(old).repsMax)
+        val state=GymState(true,Profile(name="Tester",age=20,cm=170.0,goal=goals[0]))
+        val legacy=JSONObject(exportBackup(state)).put("schema",1)
+        legacy.getJSONObject("profile").remove("photo")
+        assertEquals(state,parseBackup(legacy.toString()))
+        val guest=state.copy(profile=null,measurements=listOf(Measurement(20000,65.0)))
+        assertEquals(guest,parseBackup(exportBackup(guest)))
+        val invalid=JSONObject(exportBackup(state));invalid.getJSONObject("profile").put("photo","invalid-photo!")
+        assertTrue(runCatching{parseBackup(invalid.toString())}.isFailure)
+    }
     @Test fun emptyPlanDaysBecomeRestWithoutChangingExercisesOrHistory() {
         val target=Target(key="exercise",exerciseId="bench",sets=4,kg=20.0)
         val draft=List(28){i->when(i){0->PlanDay("Push",targets=listOf(target));1->PlanDay("Recovery",rest=true);2->PlanDay("Nama saja");else->PlanDay()}}
@@ -66,6 +101,43 @@ class TrackingTest {
         val resumed=paused.resume(500_000).add(500_000,15_000)
         assertEquals(75_000,resumed.remaining(500_000))
         assertEquals(0,resumed.remaining(900_000))
+    }
+    @Test fun completedWorkoutsDoNotSuggestTheFirstExerciseAgain() {
+        val date=LocalDate.of(2026,10,4)
+        val first=Target(key="first",exerciseId="bench",sets=2)
+        val second=Target(key="second",exerciseId="plank",sets=1)
+        val plan=PlanRevision("plan","Plan",date.toEpochDay(),1,date.toEpochDay(),1,
+            daysJson(List(7){PlanDay("Day",targets=listOf(first,second))}))
+        val session=WorkoutSession("s",date.toEpochDay(),1000,"Asia/Bangkok","Day","plan",targetsJson(listOf(first,second)))
+        val logs=listOf(SetLog("s","first",0,10,0.0,0,0.0,1001),SetLog("s","first",1,10,0.0,0,0.0,1002))
+        val state=GymState(plans=listOf(plan),sessions=listOf(session),logs=logs)
+        assertEquals(first,state.copy(sessions=emptyList(),logs=emptyList()).nextForDay(date))
+        assertEquals(second,state.nextForDay(date))
+        assertEquals(second,state.nextTarget(session,first.key))
+        assertEquals(2,state.copy(logs=logs+logs.first()).completedSets(session,first))
+        // Logs belonging to another session never complete this snapshot.
+        assertEquals(second,state.copy(logs=logs+SetLog("other","second",0,0,0.0,60,0.0,1003)).nextForDay(date))
+        val done=state.copy(logs=logs+SetLog("s","second",0,0,0.0,60,0.0,1003))
+        assertNull(done.nextForDay(date))
+        assertNull(done.copy(sessions=listOf(session.copy(ended=2000))).nextForDay(date))
+        assertNotNull(done.copy(sessions=listOf(session.copy(ended=2000))).nextForDay(date.plusDays(1)))
+    }
+    @Test fun timerRetainsCompletionUntilAcknowledgedAndItsFillDoesNotResetOnPause() {
+        val clock=RestClock(deadline=31_000,running=true,totalMs=30_000)
+        assertEquals(.5f,clock.fraction(16_000),.001f)
+        val paused=clock.pause(16_000)
+        assertEquals(.5f,paused.fraction(500_000),.001f)
+        val resumed=paused.resume(500_000)
+        assertEquals(.5f,resumed.fraction(500_000),.001f)
+        val extended=resumed.add(500_000,15_000)
+        assertEquals(30_000,extended.remaining(500_000))
+        assertEquals(45_000,extended.totalMs)
+        val finished=extended.elapsed(530_000)
+        assertTrue(finished.active);assertTrue(finished.finished);assertFalse(finished.running)
+        assertEquals(0f,finished.fraction(530_000),.001f)
+        assertEquals(finished,finished.add(530_000,15_000))
+        assertTrue(clock.pause(31_000).finished)
+        assertFalse(RestClock().active)
     }
     @Test fun backupSnapshotsAndAiBoundary() {
         val day=LocalDate.of(2026,10,2).toEpochDay()

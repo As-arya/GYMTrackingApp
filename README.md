@@ -1,6 +1,6 @@
 # GYMProject 0.1.0
 
-Aplikasi gym Android dengan Kotlin, Jetpack Compose/Material 3, dan Room. Profil, plan berulang 1–4 minggu, pencatatan set, timer, kontribusi/streak, riwayat, dan backup bekerja offline. Tema Light/Dark/System, ilustrasi statis, serta ikon tersedia di resources aplikasi.
+Aplikasi gym Android dengan Kotlin, Jetpack Compose/Material 3, dan Room. Profil dengan foto, plan berulang 1–4 minggu, pencatatan set, timer, kontribusi/streak, riwayat, dan backup bekerja offline. Tema Light/Dark/System, ilustrasi statis, serta ikon tersedia di resources aplikasi.
 
 AI opsional memakai Groq dengan API key milik pengguna. Form akun tersedia, tetapi backend login/daftar/pemulihan belum terhubung; pilih **Lanjut tanpa akun** untuk memakai tracking.
 
@@ -25,10 +25,13 @@ APK debug berada di `app/build/outputs/apk/debug/app-debug.apk`. Output build ti
 ## Mulai memakai
 
 1. Pilih Lanjut tanpa akun dan isi profil bila diperlukan.
-2. Buat plan dengan tanggal mulai, siklus 1–4 minggu, latihan dari katalog, dan target. Hari tanpa gerakan menjadi istirahat saat disimpan.
-3. Mulai latihan dari Beranda, isi hasil aktual sesuai tipe gerakan, lalu simpan set. Izinkan notifikasi untuk kontrol countdown dari lock screen.
+2. Buat plan dengan tanggal mulai, siklus 1–4 minggu, latihan dari katalog, dan target angka/rentang repetisi. Perubahan langsung berlaku hari ini, kecuali tanggal mulai di masa depan. Hari tanpa gerakan menjadi istirahat saat disimpan; sesi berjalan dan riwayat tetap memakai snapshot target awal.
+3. Mulai latihan dari Beranda untuk membuka daftar gerakan hari ini. Pilih gerakan, isi hasil aktual sesuai tipe, lalu simpan set. Timer memakai isi hijau yang menyusut dengan riak; teks waktu dan gerakan berikutnya berada di luar kotak. Izinkan notifikasi untuk kontrol countdown dari lock screen.
+   Saat waktu habis, alarm menunggu tombol **Hentikan alarm & lanjut**, lalu membuka set/gerakan berikutnya. Kontrol notifikasi juga dapat menghentikan alarm. Setelah seluruh set tercatat, simpan sesi; Beranda menampilkan hasil dan menghilangkan Langkah berikutnya.
 4. Akhiri sesi atau lanjutkan nanti. Satu set valid memenuhi streak hari terjadwal; target riwayat tetap memakai snapshot saat sesi dibuat.
-5. Ekspor backup sebelum mengganti perangkat. Impor mengganti data setelah validasi dan konfirmasi; credential AI tidak disertakan.
+5. Ubah foto dari **Profil → Edit profil**. Foto yang sama tampil di header dan profil, disimpan di perangkat, serta ikut backup manual.
+6. Tambah/koreksi/hapus berat dari **Riwayat berat badan** dan lihat grafiknya. Tanggal sesi yang sudah selesai dapat dikoreksi dari Detail sesi. Latihan di luar plan mendukung beberapa gerakan.
+7. Ekspor backup sebelum mengganti perangkat. Backup schema 2 mencakup foto dan juga bekerja tanpa profil; schema 1 tetap dapat diimpor. Impor mengganti data setelah validasi dan konfirmasi; credential AI tidak disertakan.
 
 Untuk AI, masukkan key Groq melalui pengaturan di aplikasi. Key dienkripsi menggunakan Android Keystore di perangkat, tidak tertanam di source, dan tidak masuk backup JSON. Konteks latihan dibagikan setelah izin pengguna; usulan perubahan ditinjau sebelum diterapkan.
 

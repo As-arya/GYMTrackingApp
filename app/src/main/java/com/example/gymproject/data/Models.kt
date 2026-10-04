@@ -11,7 +11,7 @@ data class Exercise(val id: String, val name: String, val group: String, val equ
 data class Target(
     val key: String = UUID.randomUUID().toString(), val exerciseId: String,
     val sets: Int = 3, val reps: Int = 10, val kg: Double = 0.0,
-    val seconds: Int = 60, val km: Double = 0.0, val rest: Int = 90
+    val seconds: Int = 60, val km: Double = 0.0, val rest: Int = 90, val repsMax: Int = reps
 )
 data class PlanDay(val title: String = "", val rest: Boolean = false, val targets: List<Target> = emptyList())
 fun PlanDay.withAutomaticRest() = if (targets.isEmpty()) copy(rest = true) else this
@@ -40,7 +40,7 @@ fun streak(today: LocalDate, since: LocalDate, scheduled: (LocalDate) -> Boolean
 }
 
 fun validTarget(t: Target): Boolean = Catalog.byId.containsKey(t.exerciseId) &&
-    t.sets in 1..20 && t.reps in 1..200 && t.kg.isFinite() && t.kg in 0.0..1000.0 &&
+    t.sets in 1..20 && t.reps in 1..200 && t.repsMax in t.reps..200 && t.kg.isFinite() && t.kg in 0.0..1000.0 &&
     t.seconds in 1..14400 && t.km.isFinite() && t.km in 0.0..500.0 && t.rest in 0..1800
 
 fun validResult(kind: LogKind, reps: Int, kg: Double, seconds: Int, km: Double): Boolean =
@@ -48,10 +48,12 @@ fun validResult(kind: LogKind, reps: Int, kg: Double, seconds: Int, km: Double):
         if (kind == LogKind.REPS) reps in 1..200 else seconds in 1..14400
 
 fun Target.json() = JSONObject().put("key", key).put("exerciseId", exerciseId).put("sets", sets)
-    .put("reps", reps).put("kg", kg).put("seconds", seconds).put("km", km).put("rest", rest)
+    .put("reps", reps).put("repsMax", repsMax).put("kg", kg).put("seconds", seconds).put("km", km).put("rest", rest)
 
 fun targetFrom(j: JSONObject) = Target(j.getString("key"), j.getString("exerciseId"), j.getInt("sets"),
-    j.getInt("reps"), j.getDouble("kg"), j.getInt("seconds"), j.getDouble("km"), j.getInt("rest"))
+    j.getInt("reps"), j.getDouble("kg"), j.getInt("seconds"), j.getDouble("km"), j.getInt("rest"), j.optInt("repsMax", j.getInt("reps")))
+
+fun planEffectiveDate(start: LocalDate, today: LocalDate) = maxOf(start, today)
 
 fun daysJson(days: List<PlanDay>): String = JSONArray().apply {
     days.forEach { d -> put(JSONObject().put("title", d.title).put("rest", d.rest)

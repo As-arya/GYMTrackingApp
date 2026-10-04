@@ -7,8 +7,8 @@ import java.time.LocalDate
 
 fun exportBackup(s:GymState):String {
     fun <T> array(items:List<T>,encode:(T)->JSONObject)=JSONArray().apply{items.forEach{put(encode(it))}}
-    val p=s.profile ?: error("Profil belum tersedia")
-    return JSONObject().put("schema",1).put("profile",JSONObject().put("name",p.name).put("age",p.age).put("cm",p.cm).put("goal",p.goal).put("target",p.target))
+    val p=s.profile
+    return JSONObject().put("schema",2).put("profile",p?.let{JSONObject().put("name",p.name).put("age",p.age).put("cm",p.cm).put("goal",p.goal).put("target",p.target).put("photo",p.photo)} ?: JSONObject.NULL)
         .put("measurements",array(s.measurements){JSONObject().put("day",LocalDate.ofEpochDay(it.day).toString()).put("kg",it.kg)})
         .put("plans",array(s.plans){JSONObject().put("id",it.id).put("title",it.title).put("start",LocalDate.ofEpochDay(it.start).toString()).put("weeks",it.weeks).put("effective",LocalDate.ofEpochDay(it.effective).toString()).put("created",it.created).put("days",JSONArray(it.days))})
         .put("sessions",array(s.sessions){JSONObject().put("id",it.id).put("day",LocalDate.ofEpochDay(it.day).toString()).put("started",it.started).put("zone",it.zone).put("title",it.title).put("revision",it.revision ?: JSONObject.NULL).put("targets",JSONArray(it.targets)).put("ended",it.ended ?: JSONObject.NULL)})
@@ -17,11 +17,16 @@ fun exportBackup(s:GymState):String {
 
 fun parseBackup(raw:String):GymState {
     require(raw.length<=5_000_000)
-    val j=JSONObject(raw);require(j.getInt("schema")==1)
+    val j=JSONObject(raw);require(j.getInt("schema") in 1..2)
     fun <T> list(key:String,decode:(JSONObject)->T):List<T> {val a=j.getJSONArray(key);return (0 until a.length()).map{decode(a.getJSONObject(it))}}
-    val p=j.getJSONObject("profile")
-    val profile=Profile(name=p.getString("name"),age=p.getInt("age"),cm=p.getDouble("cm"),goal=p.getString("goal"),target=p.optString("target"))
-    require(profile.name.isNotBlank() && profile.name.length<=80 && profile.age in 10..120 && profile.cm.isFinite() && profile.cm in 80.0..250.0 && profile.goal in goals && profile.target.length<=160)
+    require(j.has("profile"))
+    val profile=if(j.isNull("profile")) null else j.getJSONObject("profile").let{p->
+        Profile(name=p.getString("name"),age=p.getInt("age"),cm=p.getDouble("cm"),goal=p.getString("goal"),target=p.optString("target"),photo=p.optString("photo")).also{
+            require(it.photo.length <= 500_000)
+            if(it.photo.isNotEmpty()) require(java.util.Base64.getDecoder().decode(it.photo).isNotEmpty())
+            require(it.name.isNotBlank() && it.name.length<=80 && it.age in 10..120 && it.cm.isFinite() && it.cm in 80.0..250.0 && it.goal in goals && it.target.length<=160)
+        }
+    }
     val measurements=list("measurements"){Measurement(LocalDate.parse(it.getString("day")).toEpochDay(),it.getDouble("kg"))}
     require(measurements.all{it.day in 0..1_000_000 && it.kg.isFinite() && it.kg in 20.0..400.0} && measurements.map{it.day}.distinct().size==measurements.size)
     val plans=list("plans"){PlanRevision(it.getString("id"),it.getString("title"),LocalDate.parse(it.getString("start")).toEpochDay(),it.getInt("weeks"),LocalDate.parse(it.getString("effective")).toEpochDay(),it.getLong("created"),it.getJSONArray("days").toString())}
@@ -36,8 +41,11 @@ fun parseBackup(raw:String):GymState {
     return GymState(true,profile,measurements,plans,sessions,logs)
 }
 
-suspend fun importBackup(db:GymDatabase,s:GymState) = db.withTransaction {
+suspend fun importBackup(db:GymDatabase,s:GymState) {
+    s.profile?.photo?.takeIf{it.isNotEmpty()}?.let{require(decodeProfilePhoto(it)?.also { bitmap->bitmap.recycle() } != null)}
+    db.withTransaction {
     val dao=db.dao();require(dao.active()==null){"Akhiri sesi aktif sebelum mengimpor"}
     dao.clearLogs();dao.clearSessions();dao.clearPlans();dao.clearMeasurements();dao.clearProfile()
-    dao.saveProfile(s.profile!!);s.measurements.forEach{dao.saveMeasurement(it)};s.plans.forEach{dao.addPlan(it)};s.sessions.forEach{dao.addSession(it)};s.logs.forEach{dao.addSet(it)}
+    s.profile?.let{dao.saveProfile(it)};s.measurements.forEach{dao.saveMeasurement(it)};s.plans.forEach{dao.addPlan(it)};s.sessions.forEach{dao.addSession(it)};s.logs.forEach{dao.addSet(it)}
+    }
 }

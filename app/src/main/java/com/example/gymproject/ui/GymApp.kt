@@ -6,6 +6,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalActivity
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.snap
 import androidx.compose.foundation.*
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.layout.*
@@ -37,6 +41,7 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.unit.*
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -45,16 +50,22 @@ import androidx.lifecycle.compose.currentStateAsState
 import androidx.lifecycle.Lifecycle
 import com.example.gymproject.data.*
 import com.example.gymproject.data.Target
+import com.example.gymproject.timer.RestTimerService
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.util.Locale
+import kotlinx.coroutines.delay
+import java.time.ZonedDateTime
+import java.time.Duration
 
 val DateLabel: DateTimeFormatter = DateTimeFormatter.ofPattern("d MMM yyyy", Locale.forLanguageTag("id"))
 val LocalFieldBackground=staticCompositionLocalOf<Color?>{null}
+val LocalToday=compositionLocalOf{LocalDate.now()}
+val LocalMotion=compositionLocalOf{true}
 fun number(raw: String): Double? = raw.trim().replace(',', '.').toDoubleOrNull()
 fun decimal(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toString() else value.toString()
 
-@Composable fun GymApp(vm: GymViewModel, openSession: Boolean) {
+@Composable fun GymApp(vm: GymViewModel, sessionRequest: Int) {
     val state by vm.state.collectAsStateWithLifecycle()
     val theme by vm.theme.collectAsStateWithLifecycle()
     val reduce by vm.reducedMotion.collectAsStateWithLifecycle()
@@ -63,21 +74,42 @@ fun decimal(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toStr
     SideEffect { activity?.let { WindowCompat.getInsetsController(it.window,it.window.decorView).apply { isAppearanceLightStatusBars=!dark; isAppearanceLightNavigationBars=!dark } } }
     val colors = gymColors(dark)
     MaterialTheme(colorScheme=colors, typography=gymTypography, shapes=Shapes(small=RoundedCornerShape(4.dp),medium=RoundedCornerShape(18.dp),large=RoundedCornerShape(24.dp))) {
-        var page by rememberSaveable { mutableStateOf(if(openSession) "Sesi" else "Beranda") }
+        var page by rememberSaveable { mutableStateOf(if(sessionRequest>0) "Sesi" else "Beranda") }
+        var sessionTarget by rememberSaveable { mutableStateOf<String?>(null) }
         var historyId by rememberSaveable { mutableStateOf<String?>(null) }
+        var openAiSettings by rememberSaveable { mutableStateOf(false) }
         var guest by rememberSaveable { mutableStateOf(vm.settings.getBoolean("onboarded",false)) }
         var immersive by remember { mutableStateOf(false) }
         val destination=if(state.profile==null && !guest && page=="Beranda") "Login" else page
+        val screenKey=if(destination=="Riwayat" && historyId!=null) "Riwayat/$historyId" else destination
         fun enter() { guest=true; vm.settings.edit().putBoolean("onboarded",true).apply(); page="Beranda" }
         val activeLifecycle = LocalLifecycleOwner.current.lifecycle.currentStateAsState().value.isAtLeast(Lifecycle.State.RESUMED)
+        val today by produceState(LocalDate.now(),activeLifecycle) {
+            while(activeLifecycle) {
+                value=LocalDate.now()
+                val now=ZonedDateTime.now()
+                delay(Duration.between(now,now.toLocalDate().plusDays(1).atStartOfDay(now.zone)).toMillis().coerceAtLeast(1))
+            }
+        }
         val animate = !reduce && activeLifecycle
+        val timer by RestTimerService.state.collectAsStateWithLifecycle()
+        LaunchedEffect(sessionRequest) { if(sessionRequest>0) {sessionTarget=timer.targetKey;page="Sesi"} }
+        LaunchedEffect(timer.clock.finished,activeLifecycle,state.active?.id) {
+            if(activeLifecycle && timer.clock.finished && state.active!=null) {sessionTarget=timer.targetKey;page="Sesi"}
+        }
+        val context=LocalContext.current
+        LaunchedEffect(state.loaded,state.active?.id,timer.clock.active,timer.sessionId) {
+            if(state.loaded && timer.clock.active && (state.active==null || (timer.sessionId!=null && timer.sessionId!=state.active?.id))) {
+                RestTimerService.command(context,"SKIP")
+            }
+        }
         val snack = remember { SnackbarHostState() }
         val notice by vm.notice.collectAsStateWithLifecycle()
         LaunchedEffect(notice) { notice?.let { snack.showSnackbar(it); if(vm.notice.value==it) vm.notice.value=null } }
-        BackHandler(enabled=page !in listOf("Beranda","Plan","Riwayat","AI") || historyId!=null) { historyId=null; page=when(page){"Register","Recovery"->"Login";"EditProfil","Pengaturan","Berat"->"Profil";else->"Beranda"} }
+        BackHandler(enabled=page !in listOf("Beranda","Plan","Riwayat","AI") || historyId!=null) { historyId=null; page=when(page){"Sesi"->"Latihan";"Register","Recovery"->"Login";"EditProfil","Pengaturan","Berat"->"Profil";else->"Beranda"} }
         val backdrop = rememberGraphicsLayer()
         var origin by remember { mutableFloatStateOf(0f) }
-        CompositionLocalProvider(LocalContentColor provides colors.onBackground) {
+        CompositionLocalProvider(LocalContentColor provides colors.onBackground,LocalToday provides today,LocalMotion provides animate) {
         Box(Modifier.fillMaxSize().background(colors.background)) {
             Box(Modifier.fillMaxSize().drawWithContent {
                 drawContent()
@@ -90,25 +122,31 @@ fun decimal(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toStr
                 }
             }.statusBarsPadding()) {
                 if(!state.loaded) Box(Modifier.fillMaxSize(),contentAlignment=Alignment.Center) { CircularProgressIndicator() }
-                else AnimatedContent(targetState=destination,transitionSpec={ fadeIn(tween(if(reduce) 0 else 220)) togetherWith fadeOut(tween(if(reduce) 0 else 160)) },label="Halaman") { target ->
+                else AnimatedContent(targetState=screenKey,transitionSpec={
+                    (fadeIn(tween(if(reduce) 0 else 360, easing=FastOutSlowInEasing)) +
+                        slideInVertically(tween(if(reduce) 0 else 420,easing=FastOutSlowInEasing)){if(reduce) 0 else it/24}) togetherWith
+                        fadeOut(tween(if(reduce) 0 else 200))
+                },label="Halaman") { key ->
+                    val target=key.substringBefore('/')
                     when(target) {
-                        "Beranda" -> HomeScreen(vm,state,animate,{page="Profil"},{page="Plan"},{page="Sesi"},{id -> historyId=id;page="Riwayat"})
+                        "Beranda" -> HomeScreen(vm,state,animate,{page="Profil"},{page="Plan"},{page="Latihan"},{id -> historyId=id;page="Riwayat"})
+                        "Latihan" -> TodayWorkoutScreen(vm,state,{page="Beranda"},{page="Plan"},{key->sessionTarget=key;page="Sesi"},{id->historyId=id;page="Riwayat"})
                         "Plan" -> PlanScreen(vm,state,{immersive=it},{page="Profil"})
-                        "Riwayat" -> HistoryScreen(vm,state,historyId,{page="Profil"},{immersive=it}) { historyId=it }
-                        "AI" -> AiScreen(vm,state){immersive=it}
-                        "Sesi" -> SessionScreen(vm,state,animate,{page="Beranda"}) { id->historyId=id;page="Riwayat" }
+                        "Riwayat" -> HistoryScreen(vm,state,key.substringAfter('/',"").ifBlank{null},{page="Profil"},{immersive=it}) { historyId=it }
+                        "AI" -> AiScreen(vm,state,openAiSettings){immersive=it}
+                        "Sesi" -> SessionScreen(vm,state,animate,sessionTarget,{page="Beranda"},{page="Latihan"}) { id->historyId=id;page="Riwayat" }
                         "Login","Register","Recovery" -> AuthScreen(vm,target,{page=it},{if(state.profile!=null || guest) page="Beranda" else page="Onboarding"})
                         "Onboarding" -> ProfileForm(vm,state,false,{page="Login"},{enter()})
                         "Profil" -> ProfileOverview(state,{page="Beranda"},{page="EditProfil"},{page="Pengaturan"},{page="Berat"},{page="Login"})
                         "EditProfil" -> ProfileForm(vm,state,true,{page="Profil"},{guest=true;vm.settings.edit().putBoolean("onboarded",true).apply();page="Profil"})
-                        "Pengaturan" -> SettingsScreen(vm,state,{page="Profil"},{page="AI"})
-                        "Berat" -> WeightHistory(state){page="Profil"}
-                        else -> HomeScreen(vm,state,animate,{page="Profil"},{page="Plan"},{page="Sesi"},{id -> historyId=id;page="Riwayat"})
+                        "Pengaturan" -> SettingsScreen(vm,state,{page="Profil"},{openAiSettings=true;page="AI"})
+                        "Berat" -> WeightHistory(vm,state){page="Profil"}
+                        else -> HomeScreen(vm,state,animate,{page="Profil"},{page="Plan"},{page="Latihan"},{id -> historyId=id;page="Riwayat"})
                     }
                 }
             }
             if(state.loaded && (state.profile!=null || guest) && destination in listOf("Beranda","Plan","Riwayat","AI") && !immersive && historyId==null) {
-                GlassNav(page,backdrop,origin,dark,!animate,Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal=20.dp,vertical=12.dp)) { historyId=null;immersive=false;page=it }
+                GlassNav(page,backdrop,origin,dark,!animate,Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal=20.dp,vertical=12.dp)) { historyId=null;immersive=false;openAiSettings=false;page=it }
             }
             SnackbarHost(snack,Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(horizontal=20.dp).padding(bottom=110.dp))
         }
@@ -125,10 +163,16 @@ fun decimal(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toStr
 }
 @Composable fun Section(title:String) { Text(title,style=MaterialTheme.typography.titleLarge) }
 @Composable fun Panel(modifier:Modifier=Modifier,color:Color=MaterialTheme.colorScheme.surface,content:@Composable ColumnScope.()->Unit) {
-    Column(modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(color).padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp),content=content)
+    Column(modifier.fillMaxWidth().animateContentSize(tween(if(LocalMotion.current) 360 else 0,easing=FastOutSlowInEasing)).clip(RoundedCornerShape(24.dp)).background(color).padding(20.dp),verticalArrangement=Arrangement.spacedBy(12.dp),content=content)
 }
 @Composable fun Action(label:String,modifier:Modifier=Modifier,enabled:Boolean=true,onClick:()->Unit) {
-    Button(onClick=onClick,enabled=enabled,shape=RoundedCornerShape(18.dp),modifier=modifier.heightIn(min=56.dp)) { Text(label,style=MaterialTheme.typography.titleMedium) }
+    val interaction=remember{MutableInteractionSource()}
+    val pressed by interaction.collectIsPressedAsState()
+    val motion=LocalMotion.current
+    val scale by animateFloatAsState(if(pressed && motion) .98f else 1f,
+        if(motion) spring(dampingRatio=1f,stiffness=380f) else snap(),label="Tekanan tombol")
+    Button(onClick=onClick,enabled=enabled,interactionSource=interaction,shape=RoundedCornerShape(18.dp),
+        modifier=modifier.heightIn(min=56.dp).graphicsLayer{scaleX=scale;scaleY=scale}) { Text(label,style=MaterialTheme.typography.titleMedium) }
 }
 @Composable fun Field(label:String,value:String,onValue:(String)->Unit,modifier:Modifier=Modifier,numeric:Boolean=false,
     keyboardType:KeyboardType=if(numeric) KeyboardType.Decimal else KeyboardType.Text,visualTransformation:VisualTransformation=VisualTransformation.None) {
@@ -161,8 +205,11 @@ fun decimal(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toStr
         val body=Modifier.weight(1f).fillMaxWidth()
         Column(if(scroll) body.verticalScroll(rememberScrollState()) else body,
             verticalArrangement=Arrangement.spacedBy(spacing)) {
-            content()
-            Spacer(Modifier.height(if(main) 120.dp else 28.dp))
+            Column(Modifier.fillMaxWidth().animateContentSize(tween(if(LocalMotion.current) 360 else 0,easing=FastOutSlowInEasing)),
+                verticalArrangement=Arrangement.spacedBy(spacing)) {
+                content()
+                Spacer(Modifier.height(if(main) 120.dp else 28.dp))
+            }
         }
     }
 }
@@ -187,30 +234,42 @@ fun decimal(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toStr
 }
 
 @Composable private fun HomeScreen(vm:GymViewModel,s:GymState,animate:Boolean,profile:()->Unit,plan:()->Unit,session:()->Unit,history:(String)->Unit) {
-    val today=LocalDate.now()
+    val today=LocalToday.current
     val day=s.dayAt(today)
-    val revision=s.planAt(today)
     var extra by remember { mutableStateOf(false) }
     var selectedDate by remember { mutableStateOf<LocalDate?>(null) }
     val group=s.active?.decoded()?.firstOrNull()?.let{Catalog.byId[it.exerciseId]?.group}
         ?: day?.targets?.firstOrNull()?.let{Catalog.byId[it.exerciseId]?.group} ?: "Rest"
     val todaySessions=s.sessions.filter{it.day==today.toEpochDay()}
+    val completed=s.active==null && s.plannedSessionAt(today)?.let{s.nextTarget(it)==null}==true
+    val variant=(today.toEpochDay()%4).toInt()
+    val headline=when {
+        completed->"Hari ini tuntas.\nKamu makin kuat."
+        s.active!=null && s.nextTarget(s.active!!)==null->"Semua set tercatat.\nSimpan progresmu."
+        s.active!=null->"Jaga ritmemu.\nSatu set lagi."
+        day?.rest==true->"Pulih hari ini,\nsiap lagi esok."
+        day==null->"Ritme yang baik\ndimulai darimu."
+        else->listOf("Satu set dulu.\nSisanya menyusul.","Hari ini bergerak,\nbesok lebih kuat.","Pelan, tetapi\nterus bertumbuh.","Datang. Bergerak.\nBeri yang terbaik.")[variant]
+    }
+    val pose=when {completed->"Celebrate";day?.rest==true && s.active==null->"Rest";day==null && s.active==null->"Plan";else->if(variant==2 && s.active==null) "Hello" else group}
     val snapshot=todaySessions.filter{it.revision!=null}.minByOrNull{it.started}
     val targetCount=snapshot?.decoded()?.sumOf{it.sets} ?: day?.targets?.sumOf{it.sets} ?: todaySessions.sumOf{it.decoded().sumOf{t->t.sets}}
     val time=todaySessions.sumOf{((it.ended ?: System.currentTimeMillis())-it.started).coerceAtLeast(0)}/60000
-    Screen("Hai, ${s.profile?.name ?: "Teman"} 👋",today.format(DateTimeFormatter.ofPattern("EEEE, d MMMM",Locale.forLanguageTag("id"))),
-        main=true,action={IconButton(onClick=profile){FigmaIcon("profile","Profil")}}) {
+    Screen("Hai, ${s.profile?.name ?: "Teman"}",today.format(DateTimeFormatter.ofPattern("EEEE, d MMMM",Locale.forLanguageTag("id"))),
+        main=true,action={ProfileButton(s.profile?.photo.orEmpty(),profile)}) {
         Panel(color=MaterialTheme.colorScheme.primaryContainer) {
+            Text(when {completed->"TARGET TERCAPAI";s.active!=null->"SESI AKTIF";day?.rest==true->"HARI PEMULIHAN";else->"PORSIMU HARI INI"},
+                style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary)
             Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
                 Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                    Text(if(day?.rest==true && s.active==null) "Istirahat juga\nbagian dari progres." else "Sedikit hari ini,\nlebih kuat esok.",style=MaterialTheme.typography.titleLarge)
-                    Caption(s.active?.title ?: if(day?.rest==true) "Pemulihan terjadwal" else day?.title?.takeIf{it.isNotBlank()}?.let{"$it · ${day.targets.size} gerakan"} ?: "Mulai dari satu latihan")
+                    Text(headline,style=MaterialTheme.typography.titleLarge)
+                    Caption(if(completed) "Progresmu sudah tersimpan" else s.active?.title ?: if(day?.rest==true) "Beri tubuh waktu untuk pulih" else day?.title?.takeIf{it.isNotBlank()}?.let{"$it · ${day.targets.size} gerakan"} ?: "Susun jadwal yang cocok untukmu")
                 }
-                Buddy(if(day==null && s.active==null) "Plan" else group,modifier=Modifier.size(144.dp))
+                Buddy(pose,animate=animate,modifier=Modifier.size(126.dp))
             }
-            Action(if(s.active!=null) "Lanjutkan latihan" else if(day?.targets?.isNotEmpty()==true) "Mulai latihan" else if(day?.rest==true) "Latihan tambahan" else "Buat plan",Modifier.fillMaxWidth()) {
-                if(s.active!=null) session()
-                else if(day?.targets?.isNotEmpty()==true) {vm.startSession(day.title.ifBlank{group},day.targets,revision?.id);session()}
+            Action(if(completed) "Lihat hasil latihan" else if(s.active!=null) "Lanjutkan latihan" else if(day?.targets?.isNotEmpty()==true) "Mulai latihan" else if(day?.rest==true) "Latihan tambahan" else "Buat plan",Modifier.fillMaxWidth()) {
+                if(completed) s.plannedSessionAt(today)?.let{history(it.id)}
+                else if(s.active!=null || day?.targets?.isNotEmpty()==true) session()
                 else if(day?.rest==true) extra=true else plan()
             }
         }
@@ -229,22 +288,20 @@ fun decimal(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toStr
             Section("Konsistensimu"); Caption("13 minggu terakhir")
             Contributions(s,today,onDate={selectedDate=it})
         }
-        Section("Langkah berikutnya")
-        val active=s.active
-        val next=active?.decoded()?.firstOrNull{t->s.logs.count{it.sessionId==active.id && it.targetKey==t.key}<t.sets}
-            ?: day?.targets?.firstOrNull()
+        val next=s.nextForDay(today)
         if(next!=null) {
+            Section("Langkah berikutnya")
             val e=Catalog.byId.getValue(next.exerciseId)
-            InfoRow(e.name,targetLabel(next,e),{if(active!=null) session() else plan()},e)
-        } else InfoRow("Susun ritme latihanmu","Pilih gerakan dan jadwal dari Plan",plan)
+            InfoRow(e.name,targetLabel(next,e),session,e)
+        } else if(day==null && s.active==null) InfoRow("Susun ritme latihanmu","Pilih gerakan dan jadwal dari Plan",plan)
         val last=s.sessions.firstOrNull{ss->s.logs.any{it.sessionId==ss.id}}
         if(last!=null) InfoRow("Riwayat latihan","Lihat progresmu dari waktu ke waktu",{history(last.id)})
         TextButton(onClick={extra=true},modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)){Text("Latihan di luar plan")}
     }
     if(extra) CatalogPicker(onDismiss={extra=false}) { e ->
         vm.startSession("Latihan tambahan",listOf(Target(exerciseId=e.id,sets=if(e.kind==LogKind.CARDIO) 1 else 3,
-            seconds=if(e.kind==LogKind.CARDIO) 600 else 60,rest=vm.settings.getInt("default-rest",90))))
-        extra=false;session()
+            seconds=if(e.kind==LogKind.CARDIO) 600 else 60,rest=vm.settings.getInt("default-rest",90))),onStarted=session)
+        extra=false
     }
     selectedDate?.let{DateDetail(s,it,{selectedDate=null}){id->selectedDate=null;history(id)}}
 }
@@ -297,7 +354,7 @@ fun decimal(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toStr
 }
 
 @Composable fun DateDetail(s:GymState,date:LocalDate,onDismiss:()->Unit,onSession:(String)->Unit) {
-    val logs=s.dayLogs(date);val today=LocalDate.now()
+    val logs=s.dayLogs(date);val today=LocalToday.current
     AlertDialog(onDismissRequest=onDismiss,title={Text(date.format(DateLabel))},text={
         Column(verticalArrangement=Arrangement.spacedBy(12.dp)) {
             Text(when {date>today->"Jadwal mendatang";logs.isNotEmpty()->"${logs.size} set tercatat · ${(s.ratio(date)*100).toInt()}% target";
@@ -312,6 +369,8 @@ fun decimal(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toStr
     var edit by remember { mutableStateOf<Pair<SetLog,Target>?>(null) }
     var progress by rememberSaveable { mutableStateOf<String?>(null) }
     var date by remember { mutableStateOf<LocalDate?>(null) }
+    var correctedDate by remember { mutableStateOf<LocalDate?>(null) }
+    val saving by vm.saving.collectAsStateWithLifecycle()
     val session=s.sessions.find{it.id==id}
     LaunchedEffect(session?.id,progress){immersive(session!=null || progress!=null)}
     DisposableEffect(Unit){onDispose{immersive(false)}}
@@ -323,15 +382,15 @@ fun decimal(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toStr
     Screen(if(session==null) "Riwayat" else "Detail sesi",
         if(session==null) "Progresmu, satu sesi demi satu sesi" else "${session.title} · ${LocalDate.ofEpochDay(session.day).format(DateLabel)}",
         back=if(session!=null) {{select(null)}} else null,main=session==null,
-        action=if(session==null) {{IconButton(onClick=profile){FigmaIcon("profile","Profil")}}} else null) {
+        action=if(session==null) {{ProfileButton(s.profile?.photo.orEmpty(),profile)}} else null) {
         if(session==null) {
             Row(Modifier.fillMaxWidth(),horizontalArrangement=Arrangement.spacedBy(20.dp)) {
                 Metric(s.sessions.count{it.ended!=null}.toString(),"sesi latihan",Modifier.weight(1f))
-                Metric("${s.streakAt(LocalDate.now())} hari","streak sekarang",Modifier.weight(1f))
+                Metric("${s.streakAt(LocalToday.current)} hari","streak sekarang",Modifier.weight(1f))
             }
             Column(verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Section("Konsistensi setahun"); Caption("12 bulan terakhir · geser untuk melihat")
-                Contributions(s,LocalDate.now(),53){date=it}
+                Contributions(s,LocalToday.current,53){date=it}
             }
             Section("Sesi terbaru")
             if(s.sessions.isEmpty()) {
@@ -359,6 +418,9 @@ fun decimal(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toStr
                 Caption("Target mengikuti snapshot saat sesi dimulai. Perubahan plan tidak mengubah riwayat ini.")
             }
             Caption("${((session.ended ?: System.currentTimeMillis())-session.started).coerceAtLeast(0)/60000} menit · ${decimal(logs.sumOf{it.kg*it.reps})} kg volume")
+            if(session.ended!=null) DatePickerButton("Tanggal sesi",LocalDate.ofEpochDay(session.day)){
+                if(it>LocalDate.now() || it.toEpochDay()<0) vm.message("Pilih tanggal yang tidak melewati hari ini.") else correctedDate=it
+            }
             session.decoded().forEach{target->
                 val e=Catalog.byId.getValue(target.exerciseId);val own=logs.filter{it.targetKey==target.key}
                 Row(verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(12.dp)) {
@@ -375,6 +437,9 @@ fun decimal(value: Double): String = if (value % 1.0 == 0.0) value.toInt().toStr
         confirmButton={TextButton(onClick={vm.deleteSession(ss);delete=null;select(null)}){Text("Hapus")}},dismissButton={TextButton(onClick={delete=null}){Text("Batal")}})}
     edit?.let{(log,t)->SetEditor(log,t,{edit=null}){r,k,se,km->vm.editSet(log,r,k,se,km){edit=null}}}
     date?.let{DateDetail(s,it,{date=null}){selected->date=null;select(selected)}}
+    if(session!=null) correctedDate?.let{value->AlertDialog(onDismissRequest={correctedDate=null},title={Text("Koreksi tanggal sesi?")},
+        text={Text("Pindahkan catatan ke ${value.format(DateLabel)}. Kalender dan streak akan dihitung ulang; target, hasil set, dan durasi tetap sama.")},
+        confirmButton={TextButton(enabled=!saving,onClick={vm.correctSessionDate(session,value){correctedDate=null}}){Text("Simpan")}},dismissButton={TextButton(onClick={correctedDate=null}){Text("Batal")}})}
 }
 
 fun resultLabel(log:SetLog,e:Exercise)=when(e.kind) {

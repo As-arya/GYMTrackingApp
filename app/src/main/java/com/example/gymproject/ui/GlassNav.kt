@@ -77,7 +77,7 @@ private const val GlassShader = """
     val icons=listOf("home","calendar","history","ai")
     val transition=updateTransition(tabs.indexOf(page).coerceAtLeast(0),label="Morph navbar")
     val weights=tabs.indices.map { i->
-        transition.animateFloat(transitionSpec={if(reduceMotion) snap() else spring(dampingRatio=.9f,stiffness=400f)},label="Lebar tab $i") { if(it==i) 128f else 72f }
+        transition.animateFloat(transitionSpec={if(reduceMotion) snap() else spring(dampingRatio=1f,stiffness=260f)},label="Lebar tab $i") { if(it==i) 128f else 72f }
     }
     BoxWithConstraints(modifier.fillMaxWidth().onGloballyPositioned{position=it.positionInRoot();navSize=it.size}
         .shadow(22.dp,RoundedCornerShape(30.dp),clip=false,ambientColor=Color.Black.copy(alpha=.58f),spotColor=Color.Black.copy(alpha=.58f))
@@ -93,8 +93,8 @@ private const val GlassShader = """
         }.height(72.dp).padding(8.dp)) {
         val unit=(maxWidth-12.dp)/344f
         // The leading edge moves first, stretching the same pill before its trailing edge catches up.
-        val left by transition.animateDp(transitionSpec={if(reduceMotion) snap() else spring(dampingRatio=.9f,stiffness=if(targetState>initialState) 220f else 550f)},label="Tepi kiri") { unit*(it*72f)+4.dp*it }
-        val right by transition.animateDp(transitionSpec={if(reduceMotion) snap() else spring(dampingRatio=.9f,stiffness=if(targetState>initialState) 550f else 220f)},label="Tepi kanan") { unit*(it*72f+128f)+4.dp*it }
+        val left by transition.animateDp(transitionSpec={if(reduceMotion) snap() else spring(dampingRatio=1f,stiffness=if(targetState>initialState) 180f else 340f)},label="Tepi kiri") { unit*(it*72f)+4.dp*it }
+        val right by transition.animateDp(transitionSpec={if(reduceMotion) snap() else spring(dampingRatio=1f,stiffness=if(targetState>initialState) 340f else 180f)},label="Tepi kanan") { unit*(it*72f+128f)+4.dp*it }
         Box(Modifier.fillMaxSize().drawBehind {
             drawRoundRect(colors.primaryContainer,topLeft=Offset(left.toPx(),0f),size=Size((right-left).toPx().coerceAtLeast(1f),size.height),cornerRadius=CornerRadius(28.dp.toPx()))
         })

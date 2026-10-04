@@ -21,11 +21,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
-@Composable fun AiScreen(vm:GymViewModel,s:GymState,immersive:(Boolean)->Unit) {
+@Composable fun AiScreen(vm:GymViewModel,s:GymState,openSettings:Boolean=false,immersive:(Boolean)->Unit) {
     val context=LocalContext.current
     val vault=remember{CoachKey(context)}
     var configured by remember{mutableStateOf(vault.read()!=null)}
-    var settings by rememberSaveable{mutableStateOf(false)}
+    var settings by rememberSaveable{mutableStateOf(openSettings)}
     var review by remember{mutableStateOf(false)}
     var keyInput by remember{mutableStateOf("")}
     var models by remember{mutableStateOf<List<String>>(emptyList())}
@@ -135,9 +135,9 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
             Column(verticalArrangement=Arrangement.spacedBy(16.dp)) {
                 Section(Catalog.byId.getValue(old.exerciseId).name)
                 Caption("Sebelumnya");Text(targetLabel(old,Catalog.byId.getValue(old.exerciseId)))
-                Caption("Usulan");Text(targetLabel(old.copy(kg=p.kg ?: old.kg,reps=p.reps ?: old.reps,sets=p.sets ?: old.sets,rest=p.rest ?: old.rest),Catalog.byId.getValue(old.exerciseId)))
+                Caption("Usulan");Text(targetLabel(old.copy(kg=p.kg ?: old.kg,reps=p.reps ?: old.reps,repsMax=p.reps ?: old.repsMax,sets=p.sets ?: old.sets,rest=p.rest ?: old.rest),Catalog.byId.getValue(old.exerciseId)))
                 Caption(p.reason)
-                Caption("Berlaku untuk jadwal mendatang. Sesi berjalan dan riwayat tetap memakai target awalnya.")
+                Caption("Langsung berlaku hari ini, kecuali plan dimulai di masa depan. Sesi berjalan dan riwayat tetap memakai target awalnya. Kamu bisa memulihkan revisi sebelumnya dari Plan.")
             }
         },confirmButton={TextButton(enabled=plan.id==p.revision && !saving,onClick={vm.applyProposal(p.revision,p.key,p.kg,p.reps,p.sets,p.rest){proposal=null;review=false}}){Text("Terapkan")}},
             dismissButton={TextButton(onClick={proposal=null;review=false}){Text("Abaikan usulan")}})
