@@ -1,10 +1,12 @@
 package com.example.gymproject.data
 
 import android.app.Application
+import androidx.annotation.StringRes
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.room.Room
 import androidx.room.withTransaction
+import com.example.gymproject.R
 import com.example.gymproject.timer.RestTimerService
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
@@ -53,13 +55,16 @@ data class GymState(val loaded: Boolean = false, val profile: Profile? = null, v
         { scheduledAt(it) }, { dayLogs(it).isNotEmpty() })
 }
 
+/** A snackbar message resolved by the UI in the current app language. */
+class Notice(@StringRes val id: Int, vararg val args: Any)
+
 class GymViewModel(app: Application) : AndroidViewModel(app) {
     val db = Room.databaseBuilder(app, GymDatabase::class.java, "gym.db").build()
     private val dao = db.dao()
     val state = combine(dao.profile(), dao.measurements(), dao.plans(), dao.sessions(), dao.logs()) { p, m, r, s, l -> GymState(true, p, m, r, s, l) }
         .stateIn(viewModelScope, SharingStarted.Eagerly, GymState())
     val saving = MutableStateFlow(false)
-    val notice = MutableStateFlow<String?>(null)
+    val notice = MutableStateFlow<Notice?>(null)
     val settings = app.getSharedPreferences("settings", 0)
     val theme = MutableStateFlow(settings.getString("theme", "System") ?: "System")
     val reducedMotion = MutableStateFlow(settings.getBoolean("reduce", false))
@@ -69,42 +74,42 @@ class GymViewModel(app: Application) : AndroidViewModel(app) {
         saving.value = true
         viewModelScope.launch {
             try { block() }
-            catch (_: Exception) { notice.value = "Perubahan belum tersimpan. Coba lagi." }
+            catch (_: Exception) { message(R.string.msg_save_failed) }
             finally { saving.value = false }
         }
     }
-    fun message(text: String) { notice.value = text }
+    fun message(@StringRes id: Int, vararg args: Any) { notice.value = Notice(id, *args) }
     fun setTheme(value: String) { theme.value = value; settings.edit().putString("theme", value).apply() }
     fun setReduced(value: Boolean) { reducedMotion.value = value; settings.edit().putBoolean("reduce", value).apply() }
 
-    fun saveProfile(name: String, age: Int, cm: Double, kg: Double, goal: String, target: String, photo: String, onSaved: () -> Unit) {
+    fun saveProfile(name: String, age: Int, cm: Double, kg: Double, goal: String, target: String, photo: String, notify: Boolean = true, onSaved: () -> Unit) {
         if (name.isBlank() || name.length > 80 || age !in 10..120 || !cm.isFinite() || cm !in 80.0..250.0 || !kg.isFinite() || kg !in 20.0..400.0 || goal !in goals || target.length > 160) {
-            message("Periksa nama, usia, tinggi, dan berat. Gunakan angka serta satuan yang sesuai."); return
+            message(R.string.msg_profile_invalid); return
         }
         action { require(photo.isEmpty() || decodeProfilePhoto(photo)?.also { it.recycle() } != null); db.withTransaction {
             dao.saveProfile(Profile(name = name.trim(), age = age, cm = cm, goal = goal, target = target.trim(), photo = photo))
             dao.saveMeasurement(Measurement(LocalDate.now().toEpochDay(), kg))
-        }; message("Profil tersimpan"); onSaved() }
+        }; if (notify) message(R.string.msg_profile_saved); onSaved() }
     }
 
     fun savePlan(title: String, start: LocalDate, weeks: Int, days: List<PlanDay>, onSaved: () -> Unit = {}) {
         if (title.isBlank() || title.length > 80 || weeks !in 1..4 || days.size != weeks * 7 ||
             days.any { it.title.length > 80 || (it.rest && it.targets.isNotEmpty()) || it.targets.any { t -> !validTarget(t) } } ||
             days.flatMap { it.targets }.map { it.key }.let { it.size != it.distinct().size }) {
-            message("Periksa isi plan dan target latihan."); return
+            message(R.string.msg_plan_invalid); return
         }
         action {
             val today = LocalDate.now()
             val effective = planEffectiveDate(start, today)
             val created = maxOf(System.currentTimeMillis(), Math.addExact(state.value.plans.maxOfOrNull { it.created } ?: 0, 1))
             dao.addPlan(PlanRevision(UUID.randomUUID().toString(), title.trim(), start.toEpochDay(), weeks, effective.toEpochDay(), created, daysJson(days.map { it.withAutomaticRest() })))
-            message("Plan tersimpan, berlaku ${effective.dayOfMonth}/${effective.monthValue}")
+            message(R.string.msg_plan_saved, effective)
             onSaved()
         }
     }
 
     fun startSession(title: String, targets: List<Target>, revision: String? = null, onStarted: () -> Unit = {}) {
-        if (targets.isEmpty() || targets.any { !validTarget(it) }) { message("Pilih minimal satu latihan."); return }
+        if (targets.isEmpty() || targets.any { !validTarget(it) }) { message(R.string.msg_pick_exercise); return }
         action { db.withTransaction {
             if (dao.active() == null) dao.addSession(WorkoutSession(UUID.randomUUID().toString(), LocalDate.now().toEpochDay(),
                 System.currentTimeMillis(), ZoneId.systemDefault().id, title, revision, targetsJson(targets)))
@@ -114,7 +119,7 @@ class GymViewModel(app: Application) : AndroidViewModel(app) {
     fun logSet(session: WorkoutSession, target: Target, index: Int, reps: Int, kg: Double, seconds: Int, km: Double) {
         val kind = Catalog.byId.getValue(target.exerciseId).kind
         if (session.ended != null || index !in 0 until target.sets || !validResult(kind,reps,kg,seconds,km)) {
-            message("Masukkan hasil aktual yang valid sebelum menyimpan set."); return
+            message(R.string.msg_set_invalid); return
         }
         action {
             var saved = false
@@ -125,7 +130,7 @@ class GymViewModel(app: Application) : AndroidViewModel(app) {
             }
             if (saved && target.rest > 0) {
                 try { RestTimerService.command(getApplication(), "START", target.rest, session.id, target.key) }
-                catch (_: Exception) { message("Set tersimpan. Timer tidak dapat dimulai; buka aplikasi dan coba lagi.") }
+                catch (_: Exception) { message(R.string.msg_timer_failed) }
             }
         }
     }
@@ -136,24 +141,24 @@ class GymViewModel(app: Application) : AndroidViewModel(app) {
         val t = session.decoded().find { it.key == log.targetKey } ?: return
         val kind = Catalog.byId.getValue(t.exerciseId).kind
         if (!validResult(kind,reps,kg,seconds,km)) {
-            message("Hasil aktual tidak valid."); return
+            message(R.string.msg_result_invalid); return
         }
         action { dao.updateSet(log.copy(reps = if (kind == LogKind.REPS) reps else 0, kg = if (kind == LogKind.REPS) kg else 0.0,
             seconds = if (kind != LogKind.REPS) seconds else 0, km = if (kind == LogKind.CARDIO) km else 0.0)); onSaved() }
     }
-    fun finish(session: WorkoutSession, onSaved: () -> Unit) = action { dao.updateSession(session.copy(ended = System.currentTimeMillis())); runCatching { RestTimerService.command(getApplication(), "SKIP") }; message("Sesi tersimpan di riwayat"); onSaved() }
+    fun finish(session: WorkoutSession, onSaved: () -> Unit) = action { dao.updateSession(session.copy(ended = System.currentTimeMillis())); runCatching { RestTimerService.command(getApplication(), "SKIP") }; message(R.string.msg_session_saved); onSaved() }
     fun deleteSession(session: WorkoutSession) = action { dao.deleteSession(session.id) }
     fun correctSessionDate(session: WorkoutSession, date: LocalDate, onSaved: () -> Unit) {
-        if (date > LocalDate.now() || date.toEpochDay() < 0) { message("Pilih tanggal yang tidak melewati hari ini."); return }
+        if (date > LocalDate.now() || date.toEpochDay() < 0) { message(R.string.msg_date_future); return }
         action { db.withTransaction {
             val current = dao.session(session.id) ?: error("Sesi tidak ditemukan")
             require(current.ended != null)
             dao.updateSession(current.copy(day = date.toEpochDay()))
-        }; message("Tanggal sesi diperbarui; target dan hasil tetap sama"); onSaved() }
+        }; message(R.string.msg_session_date_updated); onSaved() }
     }
     fun saveWeight(original: Long?, date: LocalDate, kg: Double, onSaved: () -> Unit) {
         if (!kg.isFinite() || kg !in 20.0..400.0 || date > LocalDate.now() || date.toEpochDay() < 0) {
-            message("Gunakan berat 20–400 kg dan tanggal hingga hari ini."); return
+            message(R.string.msg_weight_invalid); return
         }
         action {
             val day = date.toEpochDay()
@@ -163,13 +168,13 @@ class GymViewModel(app: Application) : AndroidViewModel(app) {
                     dao.saveMeasurement(Measurement(day, kg)); true
                 }
             }
-            if (saved) { message("Catatan berat tersimpan"); onSaved() }
-            else message("Tanggal itu sudah memiliki catatan. Edit catatan yang ada.")
+            if (saved) { message(R.string.msg_weight_saved); onSaved() }
+            else message(R.string.msg_weight_duplicate)
         }
     }
     fun deleteWeight(day: Long, onSaved: () -> Unit) = action { dao.deleteMeasurement(day); onSaved() }
     fun addSessionTarget(session: WorkoutSession, target: Target, onSaved: () -> Unit) {
-        if (!validTarget(target)) { message("Periksa target latihan."); return }
+        if (!validTarget(target)) { message(R.string.msg_target_invalid); return }
         action { db.withTransaction {
             val current = dao.active() ?: error("Tidak ada sesi aktif")
             require(current.id == session.id && current.decoded().none { it.key == target.key })
@@ -177,16 +182,16 @@ class GymViewModel(app: Application) : AndroidViewModel(app) {
         }; onSaved() }
     }
     fun replaceTarget(session: WorkoutSession, old: Target, exerciseId: String) {
-        if (session.ended != null || state.value.logs.any { it.sessionId == session.id && it.targetKey == old.key }) { message("Gerakan yang sudah tercatat tidak diganti."); return }
+        if (session.ended != null || state.value.logs.any { it.sessionId == session.id && it.targetKey == old.key }) { message(R.string.msg_replace_blocked); return }
         val exercise = Catalog.byId[exerciseId] ?: return
         val replacement = old.copy(exerciseId = exercise.id, kg = 0.0, seconds = if (exercise.kind == LogKind.CARDIO) 600 else 60)
         action { dao.updateSession(session.copy(targets = targetsJson(session.decoded().map { if (it.key == old.key) replacement else it }))) }
     }
     fun applyProposal(revision: String, key: String, kg: Double?, reps: Int?, sets: Int?, rest: Int?, onSaved: () -> Unit) {
         val current = state.value.plans.lastOrNull()
-        if (current?.id != revision) { message("Plan sudah berubah. Minta usulan baru."); return }
+        if (current?.id != revision) { message(R.string.msg_proposal_stale); return }
         val days = current.decoded().map { day -> day.copy(targets = day.targets.map { t -> if (t.key != key) t else t.copy(kg = kg ?: t.kg, reps = reps ?: t.reps, repsMax = reps ?: t.repsMax, sets = sets ?: t.sets, rest = rest ?: t.rest) }) }
-        if (days == current.decoded()) { message("Usulan tidak memuat perubahan yang dapat diterapkan."); return }
+        if (days == current.decoded()) { message(R.string.msg_proposal_empty); return }
         savePlan(current.title, LocalDate.ofEpochDay(current.start), current.weeks, days, onSaved)
     }
     fun undoPlan() {
@@ -196,13 +201,13 @@ class GymViewModel(app: Application) : AndroidViewModel(app) {
             require(revisions.lastOrNull()?.id == last.id)
             if (last.effective > LocalDate.now().toEpochDay()) {
                 dao.deletePlan(last.id)
-                message("Revisi mendatang dibatalkan")
+                message(R.string.msg_revision_cancelled)
             } else {
                 val previous = revisions.dropLast(1).lastOrNull() ?: error("Tidak ada revisi sebelumnya")
                 dao.addPlan(previous.copy(id = UUID.randomUUID().toString(),
                     effective = planEffectiveDate(LocalDate.ofEpochDay(previous.start), LocalDate.now()).toEpochDay(),
                     created = maxOf(System.currentTimeMillis(), Math.addExact(last.created, 1))))
-                message("Plan sebelumnya diterapkan kembali; riwayat tetap aman")
+                message(R.string.msg_plan_restored)
             }
         } }
     }

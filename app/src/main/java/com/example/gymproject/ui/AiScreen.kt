@@ -11,9 +11,11 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import com.example.gymproject.R
 import com.example.gymproject.ai.*
 import com.example.gymproject.data.*
 import kotlinx.coroutines.Dispatchers
@@ -33,7 +35,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
     var question by rememberSaveable{mutableStateOf("")}
     var answer by rememberSaveable{mutableStateOf("")}
     var sent by rememberSaveable{mutableStateOf("")}
-    var error by remember{mutableStateOf<String?>(null)}
+    var error by remember{mutableStateOf<Int?>(null)}
     var proposal by remember{mutableStateOf<Proposal?>(null)}
     var working by remember{mutableStateOf(false)}
     LaunchedEffect(settings){immersive(settings)}
@@ -42,10 +44,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
     var body by remember{mutableStateOf(vm.settings.getBoolean("ai-body",false))}
     val scope=rememberCoroutineScope()
     val saving by vm.saving.collectAsStateWithLifecycle()
+    // The coach answers in the language the app is showing.
+    val english=uiLocale.language=="en"
     fun failure(cause:Throwable)=when {
-        cause is CoachError && cause.code==429->"Batas Free tier tercapai. Coba lagi nanti."
-        cause is CoachError && cause.code==401->"API key tidak diterima. Hubungkan ulang di Pengaturan AI."
-        else->"AI belum dapat menjawab. Periksa koneksi atau pilih model lain."
+        cause is CoachError && cause.code==429->R.string.ai_quota
+        cause is CoachError && cause.code==401->R.string.ai_key_rejected
+        else->R.string.ai_unavailable
     }
     fun loadModels(){scope.launch {
         working=true;error=null
@@ -57,22 +61,22 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
         working=false
     }}
     BackHandler(enabled=settings){settings=false}
-    Screen(if(settings) "Pengaturan AI" else "Teman latihan AI",if(settings) "Konteks dibagikan dengan izinmu" else "Bantu atur sesi berikutnya",
+    Screen(stringResource(if(settings) R.string.ai_settings else R.string.ai_title),stringResource(if(settings) R.string.ai_settings_subtitle else R.string.ai_subtitle),
         back=if(settings) {{settings=false}} else null,main=!settings,
-        action=if(!settings) {{IconButton(onClick={settings=true}){FigmaIcon("settings","Pengaturan AI")}}} else null) {
+        action=if(!settings) {{IconButton(onClick={settings=true}){FigmaIcon("settings",stringResource(R.string.ai_settings))}}} else null) {
         if(settings) {
-            Caption("Layanan Groq · API key dienkripsi di perangkat dan tidak masuk cadangan.")
+            Caption(stringResource(R.string.ai_service_note))
             if(!configured) {
-                Field("Groq API key",keyInput,{keyInput=it},keyboardType=KeyboardType.Password,visualTransformation=PasswordVisualTransformation())
-                Action("Simpan konfigurasi",Modifier.fillMaxWidth(),keyInput.length in 20..300) {
-                    runCatching{vault.save(keyInput)}.onSuccess{keyInput="";configured=true;loadModels()}.onFailure{error="Key tidak dapat disimpan dengan aman."}
+                Field(stringResource(R.string.ai_key_label),keyInput,{keyInput=it},keyboardType=KeyboardType.Password,visualTransformation=PasswordVisualTransformation())
+                Action(stringResource(R.string.save_config),Modifier.fillMaxWidth(),keyInput.length in 20..300) {
+                    runCatching{vault.save(keyInput)}.onSuccess{keyInput="";configured=true;loadModels()}.onFailure{error=R.string.ai_key_save_error}
                 }
             } else {
-                Text("Data yang dibagikan",style=MaterialTheme.typography.titleMedium)
-                Caption("Goal, ringkasan plan tersimpan, gerakan terkait, dan maksimal 4 sesi dari 4 minggu terakhir. Nama tidak dikirim.")
-                Toggle("Izinkan konteks latihan",consent){consent=it;vm.settings.edit().putBoolean("ai-consent",it).apply()}
-                Toggle("Sertakan usia, tinggi, dan berat",body){body=it;vm.settings.edit().putBoolean("ai-body",it).apply()}
-                OutlinedButton(onClick={loadModels()},enabled=!working,modifier=Modifier.fillMaxWidth().heightIn(min=56.dp)){Text(if(working) "Menghubungkan…" else "Muat model tersedia")}
+                Text(stringResource(R.string.ai_shared_data),style=MaterialTheme.typography.titleMedium)
+                Caption(stringResource(R.string.ai_shared_caption))
+                Toggle(stringResource(R.string.ai_allow_context),consent){consent=it;vm.settings.edit().putBoolean("ai-consent",it).apply()}
+                Toggle(stringResource(R.string.ai_include_body),body){body=it;vm.settings.edit().putBoolean("ai-body",it).apply()}
+                OutlinedButton(onClick={loadModels()},enabled=!working,modifier=Modifier.fillMaxWidth().heightIn(min=56.dp)){Text(stringResource(if(working) R.string.ai_connecting else R.string.ai_load_models))}
                 if(models.isNotEmpty()) {
                     var expanded by remember{mutableStateOf(false)}
                     Box {
@@ -81,47 +85,47 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
                             DropdownMenuItem(text={Text(id)},onClick={model=id;vm.settings.edit().putString("model",id).apply();expanded=false})
                         }}
                     }
-                } else if(model.isNotBlank()) Caption("Model tersimpan: $model")
-                Action("Selesai",Modifier.fillMaxWidth()){settings=false}
+                } else if(model.isNotBlank()) Caption(stringResource(R.string.ai_saved_model,model))
+                Action(stringResource(R.string.done),Modifier.fillMaxWidth()){settings=false}
                 TextButton(enabled=!working,onClick={
                     vault.clear();configured=false;models=emptyList();model="";proposal=null;answer="";sent=""
                     vm.settings.edit().remove("model").putBoolean("ai-consent",false).apply();consent=false
-                },modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)){Text("Hapus API key",color=MaterialTheme.colorScheme.error)}
+                },modifier=Modifier.fillMaxWidth().heightIn(min=48.dp)){Text(stringResource(R.string.ai_remove_key),color=MaterialTheme.colorScheme.error)}
             }
-            error?.let{Text(it,color=MaterialTheme.colorScheme.error)}
+            error?.let{Text(stringResource(it),color=MaterialTheme.colorScheme.error)}
         } else if(!configured) {
             Buddy("AI",modifier=Modifier.size(210.dp).align(Alignment.CenterHorizontally))
-            Section("Siapkan teman latihanmu")
-            Caption("Tambahkan model dan API key untuk memakai AI. Tracking tetap berjalan offline.")
-            Action("Atur AI",Modifier.fillMaxWidth()){settings=true}
+            Section(stringResource(R.string.ai_setup_title))
+            Caption(stringResource(R.string.ai_setup_caption))
+            Action(stringResource(R.string.ai_setup),Modifier.fillMaxWidth()){settings=true}
         } else {
             Row(horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically) {
                 Buddy("AI",modifier=Modifier.size(120.dp))
                 Column(Modifier.weight(1f),verticalArrangement=Arrangement.spacedBy(8.dp)) {
-                    Section("Apa yang ingin\nkamu tingkatkan?")
-                    Caption("Saran untuk plan berikutnya, dengan keputusan di tanganmu.")
+                    Section(stringResource(R.string.ai_question))
+                    Caption(stringResource(R.string.ai_question_caption))
                 }
             }
-            if(!consent || model.isBlank()) InfoRow("Lengkapi pengaturan AI","Pilih model dan izinkan konteks latihan",{settings=true})
+            if(!consent || model.isBlank()) InfoRow(stringResource(R.string.ai_complete_settings),stringResource(R.string.ai_complete_caption),{settings=true})
             if(sent.isNotBlank()) Panel(color=MaterialTheme.colorScheme.primaryContainer){Text(sent)}
-            if(working) Row(horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically){CircularProgressIndicator(Modifier.size(24.dp));Caption("Sedang memikirkan progresmu…")}
-            if(answer.isNotBlank()) Panel {Section("Kemajuan yang terukur");SelectionContainer{Text(answer)}}
-            error?.let{Panel {Section("AI belum tersedia");Text(it);Caption("Catatan latihanmu tetap aman dan bisa digunakan offline.")}}
+            if(working) Row(horizontalArrangement=Arrangement.spacedBy(12.dp),verticalAlignment=Alignment.CenterVertically){CircularProgressIndicator(Modifier.size(24.dp));Caption(stringResource(R.string.ai_thinking))}
+            if(answer.isNotBlank()) Panel {Section(stringResource(R.string.ai_measured));SelectionContainer{Text(answer)}}
+            error?.let{Panel {Section(stringResource(R.string.ai_not_available));Text(stringResource(it));Caption(stringResource(R.string.ai_offline_safe))}}
             proposal?.let{p->
                 val old=s.plans.lastOrNull()?.decoded()?.flatMap{it.targets}?.find{it.key==p.key}
                 if(old!=null) Panel(color=MaterialTheme.colorScheme.primaryContainer) {
-                    Section("Usulan perubahan")
+                    Section(stringResource(R.string.ai_proposal))
                     Text(Catalog.byId.getValue(old.exerciseId).name,style=MaterialTheme.typography.titleMedium)
                     Caption(p.reason)
-                    Action("Tinjau usulan",Modifier.fillMaxWidth()){review=true}
+                    Action(stringResource(R.string.ai_review),Modifier.fillMaxWidth()){review=true}
                 }
             }
-            Field("Pesan ke AI",question,{question=it.take(2000)})
-            Action("Kirim pesan",Modifier.fillMaxWidth(),consent && model.isNotBlank() && question.isNotBlank() && !working) {
+            Field(stringResource(R.string.ai_message),question,{question=it.take(2000)})
+            Action(stringResource(R.string.ai_send),Modifier.fillMaxWidth(),consent && model.isNotBlank() && question.isNotBlank() && !working) {
                 val prompt=question
                 scope.launch {
                     working=true;proposal=null;error=null;sent=prompt
-                    runCatching{withContext(Dispatchers.IO){GroqCoach.ask(vault.read() ?: error("Key kosong"),model,prompt,s,body)}}
+                    runCatching{withContext(Dispatchers.IO){GroqCoach.ask(vault.read() ?: error("Key kosong"),model,prompt,s,body,english)}}
                         .onSuccess{answer=it.answer;proposal=it.proposal;question=""}.onFailure{error=failure(it)}
                     working=false
                 }
@@ -131,15 +135,15 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
     if(review) proposal?.let{p->
         val plan=s.plans.lastOrNull()
         val old=plan?.decoded()?.flatMap{it.targets}?.find{it.key==p.key}
-        if(old!=null) AlertDialog(onDismissRequest={review=false},title={Text("Tinjau usulan")},text={
+        if(old!=null) AlertDialog(onDismissRequest={review=false},title={Text(stringResource(R.string.ai_review))},text={
             Column(verticalArrangement=Arrangement.spacedBy(16.dp)) {
                 Section(Catalog.byId.getValue(old.exerciseId).name)
-                Caption("Sebelumnya");Text(targetLabel(old,Catalog.byId.getValue(old.exerciseId)))
-                Caption("Usulan");Text(targetLabel(old.copy(kg=p.kg ?: old.kg,reps=p.reps ?: old.reps,repsMax=p.reps ?: old.repsMax,sets=p.sets ?: old.sets,rest=p.rest ?: old.rest),Catalog.byId.getValue(old.exerciseId)))
+                Caption(stringResource(R.string.ai_before));Text(targetLabel(old,Catalog.byId.getValue(old.exerciseId)))
+                Caption(stringResource(R.string.ai_after));Text(targetLabel(old.copy(kg=p.kg ?: old.kg,reps=p.reps ?: old.reps,repsMax=p.reps ?: old.repsMax,sets=p.sets ?: old.sets,rest=p.rest ?: old.rest),Catalog.byId.getValue(old.exerciseId)))
                 Caption(p.reason)
-                Caption("Langsung berlaku hari ini, kecuali plan dimulai di masa depan. Sesi berjalan dan riwayat tetap memakai target awalnya. Kamu bisa memulihkan revisi sebelumnya dari Plan.")
+                Caption(stringResource(R.string.ai_apply_note))
             }
-        },confirmButton={TextButton(enabled=plan.id==p.revision && !saving,onClick={vm.applyProposal(p.revision,p.key,p.kg,p.reps,p.sets,p.rest){proposal=null;review=false}}){Text("Terapkan")}},
-            dismissButton={TextButton(onClick={proposal=null;review=false}){Text("Abaikan usulan")}})
+        },confirmButton={TextButton(enabled=plan.id==p.revision && !saving,onClick={vm.applyProposal(p.revision,p.key,p.kg,p.reps,p.sets,p.rest){proposal=null;review=false}}){Text(stringResource(R.string.apply))}},
+            dismissButton={TextButton(onClick={proposal=null;review=false}){Text(stringResource(R.string.ai_dismiss))}})
     }
 }

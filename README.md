@@ -2,7 +2,7 @@
 
 Aplikasi gym Android dengan Kotlin, Jetpack Compose/Material 3, dan Room. Profil dengan foto, plan berulang 1–4 minggu, pencatatan set, timer, kontribusi/streak, riwayat, dan backup bekerja offline. Tema Light/Dark/System, ilustrasi statis, serta ikon tersedia di resources aplikasi.
 
-AI opsional memakai Groq dengan API key milik pengguna. Form akun tersedia, tetapi backend login/daftar/pemulihan belum terhubung; pilih **Lanjut tanpa akun** untuk memakai tracking.
+Tidak ada akun atau login. Saat pertama dibuka, aplikasi langsung menampilkan onboarding singkat untuk menyiapkan profil, yang juga bisa dilewati. Antarmuka tersedia dalam Bahasa Indonesia dan English; secara bawaan mengikuti bahasa sistem dan bisa diganti dari onboarding atau **Pengaturan → Bahasa**. AI opsional memakai Groq dengan API key milik pengguna.
 
 ## Build dan jalankan
 
@@ -24,7 +24,7 @@ APK debug berada di `app/build/outputs/apk/debug/app-debug.apk`. Output build ti
 
 ## Mulai memakai
 
-1. Pilih Lanjut tanpa akun dan isi profil bila diperlukan.
+1. Ikuti onboarding: pilih bahasa, isi nama (foto opsional), goal, lalu usia/tinggi/berat. Tekan **Lewati** bila ingin mengisinya nanti dari Profil.
 2. Buat plan dengan tanggal mulai, siklus 1–4 minggu, latihan dari katalog, dan target angka/rentang repetisi. Perubahan langsung berlaku hari ini, kecuali tanggal mulai di masa depan. Hari tanpa gerakan menjadi istirahat saat disimpan; sesi berjalan dan riwayat tetap memakai snapshot target awal.
 3. Mulai latihan dari Beranda untuk membuka daftar gerakan hari ini. Pilih gerakan, isi hasil aktual sesuai tipe, lalu simpan set. Timer memakai isi hijau yang menyusut dengan riak; teks waktu dan gerakan berikutnya berada di luar kotak. Izinkan notifikasi untuk kontrol countdown dari lock screen.
    Saat waktu habis, alarm menunggu tombol **Hentikan alarm & lanjut**, lalu membuka set/gerakan berikutnya. Kontrol notifikasi juga dapat menghentikan alarm. Setelah seluruh set tercatat, simpan sesi; Beranda menampilkan hasil dan menghilangkan Langkah berikutnya.

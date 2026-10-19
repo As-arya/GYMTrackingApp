@@ -35,6 +35,10 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
     buildFeatures { compose = true }
+    // English is the unqualified default (res/resources.properties); values-in holds Indonesian.
+    androidResources { generateLocaleConfig = true }
+    // The in-app language switch needs both languages on the device, so bundles keep them together.
+    bundle { language { enableSplit = false } }
 }
 
 ksp { arg("room.schemaLocation", "$projectDir/schemas") }

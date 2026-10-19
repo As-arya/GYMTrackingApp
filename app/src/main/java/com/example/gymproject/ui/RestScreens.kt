@@ -19,6 +19,7 @@ import androidx.compose.ui.graphics.drawscope.clipPath
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.text.style.TextAlign
@@ -40,26 +41,26 @@ import kotlin.math.sin
     val progress by animateFloatAsState(timer.clock.fraction(SystemClock.elapsedRealtime()),
         tween(if(animate) 120 else 0,easing=LinearEasing),label="Sisa istirahat")
     BackHandler(onBack=back)
-    Screen("Waktunya pulih","Set tersimpan · $exerciseName",back=back,spacing=18.dp) {
+    Screen(stringResource(R.string.rest_title),stringResource(R.string.rest_subtitle,exerciseName),back=back,spacing=18.dp) {
         Buddy("Rest",animate=animate,modifier=Modifier.size(150.dp).align(Alignment.CenterHorizontally))
         Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(2.dp)) {
-            Caption(if(timer.clock.running) "ISTIRAHAT" else "ISTIRAHAT DIJEDA")
+            Caption(stringResource(if(timer.clock.running) R.string.rest_running else R.string.rest_paused))
             Text(formatTime(remaining),style=MaterialTheme.typography.displayLarge)
-            Caption(if(timer.clock.running) "Tarik napas. Siapkan tenaga berikutnya." else "Ambil waktu yang kamu perlukan.")
+            Caption(stringResource(if(timer.clock.running) R.string.rest_breathe else R.string.rest_take_time))
         }
         RestWater(progress,animate && timer.clock.running)
         Column(verticalArrangement=Arrangement.spacedBy(6.dp)) {
-            Text("SETELAH ISTIRAHAT",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary)
+            Text(stringResource(R.string.after_rest),style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.primary)
             Text(next,style=MaterialTheme.typography.titleMedium)
         }
-        Action(if(timer.clock.running) "Jeda" else "Lanjutkan timer",Modifier.fillMaxWidth()) {
+        Action(stringResource(if(timer.clock.running) R.string.pause else R.string.resume_timer),Modifier.fillMaxWidth()) {
             RestTimerService.command(context,if(timer.clock.running) "PAUSE" else "RESUME")
         }
         Row(horizontalArrangement=Arrangement.spacedBy(12.dp)) {
-            OutlinedButton(onClick={RestTimerService.command(context,"ADD")},shape=RoundedCornerShape(18.dp),modifier=Modifier.weight(1f).heightIn(min=56.dp)){Text("+15 detik")}
-            OutlinedButton(onClick=skip,shape=RoundedCornerShape(18.dp),modifier=Modifier.weight(1f).heightIn(min=56.dp)){Text("Lewati")}
+            OutlinedButton(onClick={RestTimerService.command(context,"ADD")},shape=RoundedCornerShape(18.dp),modifier=Modifier.weight(1f).heightIn(min=56.dp)){Text(stringResource(R.string.add_15))}
+            OutlinedButton(onClick=skip,shape=RoundedCornerShape(18.dp),modifier=Modifier.weight(1f).heightIn(min=56.dp)){Text(stringResource(R.string.skip))}
         }
-        Caption("Alarm berbunyi saat selesai. Suara dan getar mengikuti pengaturan.")
+        Caption(stringResource(R.string.rest_alarm_note))
     }
 }
 
@@ -69,8 +70,9 @@ import kotlin.math.sin
         loop.animateFloat(0f,(2*PI).toFloat(),infiniteRepeatable(tween(3200,easing=LinearEasing)),label="Gelombang").value
     } else 0f
     val empty=MaterialTheme.colorScheme.primaryContainer
+    val description=stringResource(R.string.rest_remaining_cd)
     Canvas(Modifier.fillMaxWidth().height(120.dp).clip(RoundedCornerShape(28.dp)).background(empty)
-        .semantics { contentDescription="Sisa waktu istirahat"; progressBarRangeInfo=ProgressBarRangeInfo(progress,0f..1f) }) {
+        .semantics { contentDescription=description; progressBarRangeInfo=ProgressBarRangeInfo(progress,0f..1f) }) {
         if(progress<=0f) return@Canvas
         val amplitude=8.dp.toPx()*sin(PI*progress).toFloat()
         val edge=Path().apply {
@@ -102,7 +104,7 @@ import kotlin.math.sin
     } else .5f
     val primary=MaterialTheme.colorScheme.primary
     val container=MaterialTheme.colorScheme.primaryContainer
-    Screen("Istirahat selesai","Waktunya kembali bergerak",spacing=24.dp) {
+    Screen(stringResource(R.string.alarm_title),stringResource(R.string.alarm_subtitle),spacing=24.dp) {
         Spacer(Modifier.height(20.dp))
         Box(Modifier.size(220.dp).align(Alignment.CenterHorizontally),contentAlignment=Alignment.Center) {
             Canvas(Modifier.fillMaxSize()) {
@@ -112,14 +114,14 @@ import kotlin.math.sin
             Icon(painterResource(R.drawable.ic_timer_notification),null,Modifier.size(66.dp),tint=primary)
         }
         Column(Modifier.fillMaxWidth(),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(10.dp)) {
-            Text(if(allDone) "Semua set tercatat!" else "Siap untuk set berikutnya?",style=MaterialTheme.typography.headlineLarge,textAlign=TextAlign.Center)
-            Caption("Ketuk tombol di bawah untuk menghentikan alarm.")
+            Text(stringResource(if(allDone) R.string.alarm_all_done else R.string.alarm_ready),style=MaterialTheme.typography.headlineLarge,textAlign=TextAlign.Center)
+            Caption(stringResource(R.string.alarm_tap))
         }
         Panel {
-            Caption(if(allDone) "SELANJUTNYA" else "GERAKAN BERIKUTNYA")
+            Caption(stringResource(if(allDone) R.string.alarm_next_label else R.string.alarm_next_exercise))
             Text(next,style=MaterialTheme.typography.titleMedium)
         }
-        Action(if(allDone) "Hentikan alarm & selesaikan sesi" else "Hentikan alarm & lanjut",Modifier.fillMaxWidth(),onClick=dismiss)
+        Action(stringResource(if(allDone) R.string.alarm_stop_finish else R.string.stop_alarm_continue),Modifier.fillMaxWidth(),onClick=dismiss)
         Buddy(if(allDone) "Celebrate" else "Hello",modifier=Modifier.size(120.dp).align(Alignment.CenterHorizontally))
     }
 }

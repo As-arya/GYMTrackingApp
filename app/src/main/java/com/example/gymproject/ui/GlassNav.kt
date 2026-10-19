@@ -24,9 +24,11 @@ import androidx.compose.ui.graphics.layer.drawLayer
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.*
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
+import com.example.gymproject.R
 
 // Figma 23:240: frost 3, refraction 1, depth 32, dispersion .5, light -45°/.8.
 // The input is the live bottom strip; navigation icons/text are drawn afterward.
@@ -75,6 +77,7 @@ private const val GlassShader = """
     }
     val tabs=listOf("Beranda","Plan","Riwayat","AI")
     val icons=listOf("home","calendar","history","ai")
+    val labels=listOf(R.string.nav_home,R.string.nav_plan,R.string.nav_history,R.string.nav_ai).map{stringResource(it)}
     val transition=updateTransition(tabs.indexOf(page).coerceAtLeast(0),label="Morph navbar")
     val weights=tabs.indices.map { i->
         transition.animateFloat(transitionSpec={if(reduceMotion) snap() else spring(dampingRatio=1f,stiffness=260f)},label="Lebar tab $i") { if(it==i) 128f else 72f }
@@ -103,12 +106,12 @@ private const val GlassShader = """
                 val selected=page==name
                 val tint by transition.animateColor(transitionSpec={tween(if(reduceMotion) 0 else 180)},label="Warna tab $i") { if(it==i) colors.primary else colors.onSurfaceVariant }
                 Row(Modifier.weight(weights[i].value).fillMaxHeight().clip(RoundedCornerShape(28.dp))
-                    .selectable(selected,interactionSource=null,indication=null,role=Role.Tab,onClick={onSelect(name)}).semantics{contentDescription=name},
+                    .selectable(selected,interactionSource=null,indication=null,role=Role.Tab,onClick={onSelect(name)}).semantics{contentDescription=labels[i]},
                     horizontalArrangement=Arrangement.Center,verticalAlignment=Alignment.CenterVertically) {
                     FigmaIcon(icons[i],tint=tint)
                     AnimatedVisibility(selected,enter=fadeIn(tween(if(reduceMotion) 0 else 180))+expandHorizontally(tween(if(reduceMotion) 0 else 260),expandFrom=Alignment.Start),
                         exit=fadeOut(tween(if(reduceMotion) 0 else 100))+shrinkHorizontally(tween(if(reduceMotion) 0 else 260),shrinkTowards=Alignment.Start)) {
-                        Text(name,Modifier.padding(start=6.dp),style=MaterialTheme.typography.labelLarge,color=tint,maxLines=1,softWrap=false)
+                        Text(labels[i],Modifier.padding(start=6.dp),style=MaterialTheme.typography.labelLarge,color=tint,maxLines=1,softWrap=false)
                     }
                 }
             }

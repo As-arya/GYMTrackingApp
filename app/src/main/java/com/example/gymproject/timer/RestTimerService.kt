@@ -12,6 +12,7 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import com.example.gymproject.MainActivity
 import com.example.gymproject.R
+import com.example.gymproject.ui.AppLanguage
 import kotlinx.coroutines.flow.MutableStateFlow
 
 data class RestClock(val deadline: Long = 0, val pausedMs: Long = 0, val running: Boolean = false,
@@ -57,13 +58,14 @@ class RestTimerService : Service() {
             handler.postDelayed(this, 2000)
         }
     }
+    override fun attachBaseContext(base: Context) { super.attachBaseContext(AppLanguage.wrap(base)) }
     override fun onCreate() {
         super.onCreate()
         clock = restore(this)
         val saved = getSharedPreferences("timer", 0)
         sessionId = saved.getString("session", null); targetKey = saved.getString("target", null)
-        if (Build.VERSION.SDK_INT >= 26) manager.createNotificationChannel(NotificationChannel(CHANNEL, "Rest timer", NotificationManager.IMPORTANCE_LOW).apply {
-            description = "Countdown istirahat antar-set"; setSound(null, null); enableVibration(false)
+        if (Build.VERSION.SDK_INT >= 26) manager.createNotificationChannel(NotificationChannel(CHANNEL, getString(R.string.notif_channel), NotificationManager.IMPORTANCE_LOW).apply {
+            description = getString(R.string.notif_channel_desc); setSound(null, null); enableVibration(false)
         })
     }
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -105,13 +107,13 @@ class RestTimerService : Service() {
         val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra("session", true), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val builder = NotificationCompat.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_timer_notification)
-            .setContentTitle(if (clock.finished) "Istirahat selesai" else if (clock.running) "Waktu istirahat" else "Istirahat dijeda")
-            .setContentText(if (clock.finished) "Ketuk untuk lanjut latihan atau hentikan alarm." else "${formatTime(remaining)} • bersiap untuk set berikutnya")
+            .setContentTitle(getString(if (clock.finished) R.string.alarm_title else if (clock.running) R.string.notif_running else R.string.notif_paused))
+            .setContentText(if (clock.finished) getString(R.string.notif_done_text) else getString(R.string.notif_running_text, formatTime(remaining)))
             .setWhen(System.currentTimeMillis() + remaining).setUsesChronometer(clock.running).setChronometerCountDown(true)
             .setContentIntent(open).setOnlyAlertOnce(true).setOngoing(true).setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-        if (clock.finished) builder.addAction(0, "Hentikan alarm", pending("DISMISS", 4))
-        else builder.addAction(0, if (clock.running) "Pause" else "Lanjut", pending(if (clock.running) "PAUSE" else "RESUME", 1))
-            .addAction(0, "+15 detik", pending("ADD", 2)).addAction(0, "Skip", pending("SKIP", 3))
+        if (clock.finished) builder.addAction(0, getString(R.string.notif_stop_alarm), pending("DISMISS", 4))
+        else builder.addAction(0, getString(if (clock.running) R.string.pause else R.string.notif_resume), pending(if (clock.running) "PAUSE" else "RESUME", 1))
+            .addAction(0, getString(R.string.add_15), pending("ADD", 2)).addAction(0, getString(R.string.skip), pending("SKIP", 3))
         return builder.build()
     }
     private fun pending(action: String, code: Int) = PendingIntent.getService(this, code, Intent(this, RestTimerService::class.java).setAction(action), PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)

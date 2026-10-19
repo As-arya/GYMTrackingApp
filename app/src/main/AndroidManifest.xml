@@ -19,6 +19,10 @@
         android:supportsRtl="true"
         android:usesCleartextTraffic="false"
         android:theme="@style/Theme.GYMProject">
+        <!-- Stores the in-app language choice on Android 12 and older; Android 13+ keeps it in the system. -->
+        <service android:name="androidx.appcompat.app.AppLocalesMetadataHolderService" android:enabled="false" android:exported="false">
+            <meta-data android:name="autoStoreLocales" android:value="true" />
+        </service>
         <service android:name=".timer.RestTimerService" android:exported="false" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE" android:value="User-started workout rest countdown with pause and skip controls and completion alarm until acknowledged; continues while screen is locked, without sensor collection." />
         </service>
